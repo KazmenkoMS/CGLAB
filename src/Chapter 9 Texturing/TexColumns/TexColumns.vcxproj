@@ -164,6 +164,12 @@
     <ClCompile Include="..\..\Common\DDSTextureLoader.cpp" />
     <ClCompile Include="..\..\Common\GameTimer.cpp" />
     <ClCompile Include="..\..\Common\GeometryGenerator.cpp" />
+    <ClCompile Include="..\..\Common\imgui.cpp" />
+    <ClCompile Include="..\..\Common\imgui_draw.cpp" />
+    <ClCompile Include="..\..\Common\imgui_impl_dx12.cpp" />
+    <ClCompile Include="..\..\Common\imgui_impl_win32.cpp" />
+    <ClCompile Include="..\..\Common\imgui_tables.cpp" />
+    <ClCompile Include="..\..\Common\imgui_widgets.cpp" />
     <ClCompile Include="..\..\Common\MathHelper.cpp" />
     <ClCompile Include="..\..\Common\model.cpp" />
     <ClCompile Include="FrameResource.cpp" />
@@ -177,6 +183,11 @@
     <ClInclude Include="..\..\Common\DDSTextureLoader.h" />
     <ClInclude Include="..\..\Common\GameTimer.h" />
     <ClInclude Include="..\..\Common\GeometryGenerator.h" />
+    <ClInclude Include="..\..\Common\imconfig.h" />
+    <ClInclude Include="..\..\Common\imgui.h" />
+    <ClInclude Include="..\..\Common\imgui_impl_dx12.h" />
+    <ClInclude Include="..\..\Common\imgui_impl_win32.h" />
+    <ClInclude Include="..\..\Common\imgui_internal.h" />
     <ClInclude Include="..\..\Common\MathHelper.h" />
     <ClInclude Include="..\..\Common\model.h" />
     <ClInclude Include="..\..\Common\UploadBuffer.h" />

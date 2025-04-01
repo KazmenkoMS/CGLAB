@@ -216,11 +216,11 @@ struct MeshGeometry
 
 struct Light
 {
-    DirectX::XMFLOAT3 Strength = { 0.5f, 0.5f, 0.5f };
+    DirectX::XMFLOAT3 Strength = { 2.f,2.f, 2.f };
     float FalloffStart = 1.0f;                          // point/spot light only
     DirectX::XMFLOAT3 Direction = { 0.0f, -1.0f, 0.0f };// directional/spot light only
-    float FalloffEnd = 10.0f;                           // point/spot light only
-    DirectX::XMFLOAT3 Position = { 0.0f, 0.0f, 0.0f };  // point/spot light only
+    float FalloffEnd = 70.0f;                           // point/spot light only
+    DirectX::XMFLOAT3 Position = { 1.0f, 20.0f, 1.0f };  // point/spot light only
     float SpotPower = 64.0f;                            // spot light only
 };
 
@@ -251,6 +251,8 @@ struct Material
 
 	// Index into SRV heap for normal texture.
 	int NormalSrvHeapIndex = -1;
+	
+    int DispSrvHeapIndex = -1;
 
 	// Dirty flag indicating the material has changed and we need to update the constant buffer.
 	// Because we have a material constant buffer for each FrameResource, we have to apply the

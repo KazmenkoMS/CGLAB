@@ -20,6 +20,7 @@
 
 Texture2D    gDiffuseMap : register(t0);
 Texture2D    gNormalMap : register(t1);
+Texture2D    gDispMap : register(t2);
 
 
 SamplerState gsamPointWrap        : register(s0);
@@ -55,12 +56,17 @@ cbuffer cbPass : register(b1)
     float gTotalTime;
     float gDeltaTime;
     float4 gAmbientLight;
-
+    Light gLights[MaxLights];
+    
+    float gTessFactorMin; // Минимальный фактор тесселяции ребер
+    float gTessFactorMax; // Максимальный фактор тесселяции ребер
+    float gTessInsideFactor; // Фактор тесселяции внутри патча (можно тоже сделать динамическим)
+    float gMaxTessDistance; // Расстояние, на котором достигается мин. тесселяция
+    float gDisplacementScale; // Масштаб смещения
     // Indices [0, NUM_DIR_LIGHTS) are directional lights;
     // indices [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS) are point lights;
     // indices [NUM_DIR_LIGHTS+NUM_POINT_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHT+NUM_SPOT_LIGHTS)
     // are spot lights for a maximum of MaxLights per object.
-    Light gLights[MaxLights];
 };
 
 cbuffer cbMaterial : register(b2)
@@ -87,6 +93,44 @@ struct VertexOut
 	float2 TexC    : TEXCOORD;
     float3 Tan : TANGENT;
 };
+
+// VS -> HS
+struct VertexOutHSIn
+{
+    float3 PosW : POSITION; // Позиция в мире
+    float3 NormalW : NORMAL;
+    float2 TexC : TEXCOORD0;
+    float3 TanW : TANGENT;
+};
+
+// HS -> DS (Control Point Data) - часто совпадает с VertexOutHSIn
+struct HSOutDSIn
+{
+    float3 PosW : POSITION;
+    float3 NormalW : NORMAL;
+    float2 TexC : TEXCOORD0;
+    float3 TanW : TANGENT;
+};
+
+// HS Constant Function Output
+struct PatchTess
+{
+    float EdgeTess[3] : SV_TessFactor; // Для треугольных патчей
+    float InsideTess : SV_InsideTessFactor; // Для треугольных патчей
+    // Можно добавить другие данные, передаваемые для всего патча
+};
+
+// DS -> PS
+struct DSOutPSIn
+{
+    float4 PosH : SV_POSITION; // Позиция в Clip Space (!!!)
+    float3 PosW : POSITION; // Позиция в мире (для освещения)
+    float3 NormalW : NORMAL; // Нормаль в мире (после смещения!)
+    float2 TexC : TEXCOORD0; // Текстурные координаты
+    float3 TanW : TANGENT; // Касательная в мире (для normal mapping)
+};
+
+
 float3 NormalSampleToWorldSpace(float3 normalMapSample, float3 unitNormalW, float3 tangentW)
 {
 	// Uncompress each component from [0,1] to [-1,1].
@@ -104,54 +148,147 @@ float3 NormalSampleToWorldSpace(float3 normalMapSample, float3 unitNormalW, floa
 
     return bumpedNormalW;
 }
-VertexOut VS(VertexIn vin)
+VertexOutHSIn VS(VertexIn vin)
 {
-	VertexOut vout = (VertexOut)0.0f;
-    // Transform to world space.
-    float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
-    vout.PosW = posW;
+    VertexOutHSIn vout;
 
-    vout.PosH = mul(posW, gViewProj);
-    
+    // Трансформируем позицию, нормаль, касательную в мировые координаты
+    vout.PosW = mul(float4(vin.PosL, 1.0f), gWorld).xyz;
+    // Для нормали/касательной используем gWorld (предполагая uniform scale).
+    // Если есть non-uniform scale, нужна инверсно-транспонированная матрица мира (часто (float3x3)gInvWorld).
+    // Но для простоты пока используем gWorld.
+    vout.NormalW = normalize(mul(vin.NormalL, (float3x3) gWorld));
+    vout.TanW = normalize(mul(vin.Tan, (float3x3) gWorld));
+
+    // Трансформируем текстурные координаты (с учетом трансформаций объекта и материала)
     float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
     vout.TexC = mul(texC, gMatTransform).xy;
-    
-    // Assumes nonuniform scaling; otherwise, need to use inverse-transpose of world matrix.
-    vout.NormalW = mul(vin.NormalL, (float3x3)gWorld);
-    vout.Tan = mul(vin.Tan, (float3x3) gWorld);
-    // Transform to homogeneous clip space.
 
-	// Output vertex attributes for interpolation across triangle.
- 
-    
     return vout;
 }
 
-float4 PS(VertexOut pin) : SV_Target
+
+// Функция для вычисления факторов тесселяции на основе расстояния
+PatchTess CalcTessFactors(float3 p0, float3 p1, float3 p2)
 {
-    float4 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
-    float3 normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
-    pin.NormalW = normalize(pin.NormalW);
-    float3 bumpedNormalW = NormalSampleToWorldSpace(normalSample.rgb, pin.NormalW, pin.Tan);
+    PatchTess pt;
 
+    // Вычисляем центр патча
+    float3 patchCenterW = (p0 + p1 + p2) / 3.0f;
+    float distToEye = distance(patchCenterW, gEyePosW);
     
-    // Interpolating normal can unnormalize it, so renormalize it.
+    // Линейно интерполируем фактор тесселяции между min и max в зависимости от расстояния
+    float tessFactor = lerp(gTessFactorMax, gTessFactorMin, saturate(distToEye / gMaxTessDistance));
 
-    // Vector from point being lit to eye. 
+    // Устанавливаем факторы для ребер и внутренней части
+    // Можно вычислять индивидуально для каждого ребра для адаптивности
+    pt.EdgeTess[0] = tessFactor;
+    pt.EdgeTess[1] = tessFactor;
+    pt.EdgeTess[2] = tessFactor;
+    pt.InsideTess = tessFactor; // Или использовать gTessInsideFactor
+
+    return pt;
+}
+
+// HS Constant Function
+
+PatchTess HSConst(InputPatch<VertexOutHSIn, 3> patch) // 3 контрольные точки для треугольника
+{
+    // Вычисляем факторы тесселяции для этого патча
+    return CalcTessFactors(patch[0].PosW, patch[1].PosW, patch[2].PosW);
+}
+
+// HS Patch Function
+[domain("tri")] // Домен - треугольник
+[partitioning("pow2")] // Схема разбиения (или "integer", "fractional_even", "pow2")
+[outputtopology("triangle_cw")] // Выходные примитивы - треугольники по часовой стрелке
+[outputcontrolpoints(3)] // 3 контрольные точки на выходе
+[patchconstantfunc("HSConst")] // Указываем константную функцию
+
+
+HSOutDSIn HSMain(InputPatch<VertexOutHSIn, 3> patch, uint i : SV_OutputControlPointID)
+{
+    HSOutDSIn hout;
+
+    // Просто передаем данные контрольной точки
+    hout.PosW = patch[i].PosW;
+    hout.NormalW = patch[i].NormalW;
+    hout.TexC = patch[i].TexC;
+    hout.TanW = patch[i].TanW;
+
+    return hout;
+}
+
+// --- Domain Shader (DS) ---
+// ИЗМЕНЕН: Убрано сэмплирование Displacement Map и смещение позиции
+
+[domain("tri")]
+DSOutPSIn DSMain(PatchTess patchTessConstants,
+                 float3 domainLoc : SV_DomainLocation, // Барицентрические координаты (u, v, w)
+                 const OutputPatch<HSOutDSIn, 3> patch)
+{
+    DSOutPSIn dout;
+
+    // 1. Интерполяция атрибутов контрольных точек
+    dout.PosW = domainLoc.x * patch[0].PosW + domainLoc.y * patch[1].PosW + domainLoc.z * patch[2].PosW;
+    dout.NormalW = domainLoc.x * patch[0].NormalW + domainLoc.y * patch[1].NormalW + domainLoc.z * patch[2].NormalW;
+    dout.TexC = domainLoc.x * patch[0].TexC + domainLoc.y * patch[1].TexC + domainLoc.z * patch[2].TexC;
+    dout.TanW = domainLoc.x * patch[0].TanW + domainLoc.y * patch[1].TanW + domainLoc.z * patch[2].TanW;
+
+    // Нормализуем интерполированные векторы (важно для нормалей и касательных)
+    dout.NormalW = normalize(dout.NormalW);
+    dout.TanW = normalize(dout.TanW);
+
+    // 2. Сэмплирование карты смещения (ЗАКОММЕНТИРОВАНО / УДАЛЕНО)
+    float displacementValue = gDispMap.SampleLevel(gsamLinearWrap, dout.TexC, 0.0f).r;
+
+    // 3. Смещение вершины (ЗАКОММЕНТИРОВАНО / УДАЛЕНО)
+    float displacementOffset = (displacementValue - 0.5f) * gDisplacementScale;
+    dout.PosW += displacementOffset * dout.NormalW; // <- ЭТО УБРАНО
+
+    // 4. Пересчет нормали/касательной (НЕ ТРЕБУЕТСЯ, так как смещения нет)
+
+    // 5. Трансформация ИНТЕРПОЛИРОВАННОЙ мировой позиции в Clip Space
+    dout.PosH = mul(float4(dout.PosW, 1.0f), gViewProj);
+
+    // Возвращаем структуру для Пиксельного Шейдера
+    return dout;
+}
+
+
+
+
+// Изменить сигнатуру функции
+float4 PS(DSOutPSIn pin) : SV_Target
+{
+    // Используем текстуру и сэмплер как раньше
+    float4 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
+
+    // Используем normal map, если есть
+    // Функция NormalSampleToWorldSpace должна использовать pin.NormalW и pin.TanW из DS
+    float3 normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb; // Загружаем сэмпл нормали
+    float3 bumpedNormalW = NormalSampleToWorldSpace(normalSample, pin.NormalW, pin.TanW); // Вычисляем смещенную нормаль
+
+    // Нормаль уже должна быть нормализована в DS, но на всякий случай:
+    bumpedNormalW = normalize(bumpedNormalW); // Используем bumpedNormalW для освещения
+
+    // Вектор к камере
     float3 toEyeW = normalize(gEyePosW - pin.PosW);
 
-    // Light terms.
-    float4 ambient = gAmbientLight*diffuseAlbedo;
+    // Расчет освещения (используя bumpedNormalW и pin.PosW)
+    float4 ambient = gAmbientLight * diffuseAlbedo;
 
     const float shininess = 1.0f - gRoughness;
-    Material mat = { diffuseAlbedo, gFresnelR0, shininess };
-    float3 shadowFactor = 1.0f;
-    float4 directLight = ComputeLighting(gLights, mat, pin.PosW,
-        bumpedNormalW, toEyeW, shadowFactor);
+    Material mat = { diffuseAlbedo, gFresnelR0, shininess }; // Передаем обновленный diffuseAlbedo
 
-    float4 litColor = ambient + directLight;
-    // Common convention to take alpha from diffuse albedo.
-    litColor.a = diffuseAlbedo.a;
+    // Вычисляем прямое освещение для всех источников света
+    float3 directLight = ComputeLighting(gLights,mat,pin.PosW, bumpedNormalW, toEyeW, 1.f); // Передаем bumpedNormalW
+    float4 litColor = ambient + float4(directLight, 0.0f);
+
+    // Добавляем туман, если нужно (fog logic...)
+
+    // Альфа-коррекция и т.д.
+    litColor.a = diffuseAlbedo.a; // Сохраняем альфу из текстуры
 
     return litColor;
 }

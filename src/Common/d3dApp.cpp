@@ -4,7 +4,9 @@
 
 #include "d3dApp.h"
 #include <WindowsX.h>
-
+#include "imgui.h"
+#include "imgui_impl_dx12.h"
+#include "imgui_impl_win32.h"
 using Microsoft::WRL::ComPtr;
 using namespace std;
 using namespace DirectX;
@@ -16,7 +18,7 @@ MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	// before CreateWindow returns, and thus before mhMainWnd is valid.
     return D3DApp::GetApp()->MsgProc(hwnd, msg, wParam, lParam);
 }
-
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 D3DApp* D3DApp::mApp = nullptr;
 D3DApp* D3DApp::GetApp()
 {
@@ -264,6 +266,8 @@ void D3DApp::OnResize()
  
 LRESULT D3DApp::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+	if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
+		return true;
 	switch( msg )
 	{
 	// WM_ACTIVATE is sent when the window is activated or deactivated.  
@@ -357,6 +361,9 @@ LRESULT D3DApp::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
  
 	// WM_DESTROY is sent when the window is being destroyed.
 	case WM_DESTROY:
+		ImGui_ImplDX12_Shutdown();
+		ImGui_ImplWin32_Shutdown();
+		ImGui::DestroyContext();
 		PostQuitMessage(0);
 		return 0;
 
@@ -446,6 +453,10 @@ bool D3DApp::InitMainWindow()
 	ShowWindow(mhMainWnd, SW_SHOW);
 	UpdateWindow(mhMainWnd);
 
+	
+
+
+
 	return true;
 }
 
@@ -511,6 +522,8 @@ bool D3DApp::InitDirect3D()
 	CreateCommandObjects();
     CreateSwapChain();
     CreateRtvAndDsvDescriptorHeaps();
+
+	
 
 	return true;
 }

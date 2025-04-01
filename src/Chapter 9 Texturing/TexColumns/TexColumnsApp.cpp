@@ -9,6 +9,9 @@
 #include <filesystem>
 #include "FrameResource.h"
 #include <iostream>
+#include "imgui_impl_dx12.h"
+#include "imgui_impl_win32.h"
+#include "imgui.h"
 Camera cam;
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -93,7 +96,7 @@ private:
     void BuildShapeGeometry();
     void BuildPSOs();
     void BuildFrameResources();
-	void CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness);
+	void CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, int _SRVDispIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness);
     void BuildMaterials();
 	void RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation);
 	void BuildCustomMeshGeometry(std::string name, UINT& meshVertexOffset, UINT& meshIndexOffset, UINT& prevVertSize, UINT& prevIndSize, std::vector<Vertex>& vertices, std::vector<std::uint16_t>& indices, MeshGeometry* Geo);
@@ -141,6 +144,8 @@ private:
     float mRadius = 15.0f;
 
     POINT mLastMousePos;
+
+	bool isFillModeSolid = true;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -173,6 +178,8 @@ TexColumnsApp::TexColumnsApp(HINSTANCE hInstance)
 
 TexColumnsApp::~TexColumnsApp()
 {
+	
+
     if(md3dDevice != nullptr)
         FlushCommandQueue();
 }
@@ -213,6 +220,7 @@ bool TexColumnsApp::Initialize()
     if(!D3DApp::Initialize())
         return false;
 
+
     // Reset the command list to prep for initialization commands.
     ThrowIfFailed(mCommandList->Reset(mDirectCmdListAlloc.Get(), nullptr));
 
@@ -231,6 +239,27 @@ bool TexColumnsApp::Initialize()
     BuildRenderItems();
     BuildFrameResources();
 
+	// INITIALIZE IMGUI ////////////////////
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGui::StyleColorsDark();
+	ImGuiIO& io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+	ImGui_ImplDX12_InitInfo init_info = {};
+	init_info.Device = md3dDevice.Get();
+	init_info.CommandQueue = mCommandQueue.Get();
+	init_info.NumFramesInFlight = gNumFrameResources;
+	init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // Or your render target format.
+	init_info.DSVFormat = DXGI_FORMAT_UNKNOWN;
+	init_info.SrvDescriptorHeap = mSrvDescriptorHeap.Get();
+	init_info.LegacySingleSrvCpuDescriptor = mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+	init_info.LegacySingleSrvGpuDescriptor = mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+	ImGui_ImplWin32_Init(mhMainWnd);
+	ImGui_ImplDX12_Init(&init_info);
+	////////////////////////////////////////
+	
     // Execute the initialization commands.
     ThrowIfFailed(mCommandList->Close());
     ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
@@ -306,34 +335,10 @@ void TexColumnsApp::Update(const GameTimer& gt)
 
 
 
-
+	
 
 	UpdateCamera(gt);
-	for (auto& rItem : mAllRitems)
-	{
-		if (rItem->Name == "eyeL")
-		{
-
-			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(0.63,0.9,-1.1) * XMMatrixTranslation(0, 3, 0) * worldHead );
-			rItem->NumFramesDirty = gNumFrameResources;
-		}
-		if (rItem->Name == "eyeR")
-		{
-			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(-0.63, 0.9, -1.1) * XMMatrixTranslation(0, 3, 0) * worldHead );
-			rItem->NumFramesDirty = gNumFrameResources;
-		}
-		if (rItem->Name == "nigga")
-		{
-			XMStoreFloat4x4(&rItem->World, XMMatrixScaling(3, 3, 3) * XMMatrixTranslation(0, 3, 0) * worldHead);
-			rItem->NumFramesDirty = gNumFrameResources;
-		}
-		if (rItem->Name == "box")
-		{
-			XMMATRIX a = XMLoadFloat4x4(&rItem->TexTransform);
-			XMStoreFloat4x4(&rItem->TexTransform,a * XMMatrixTranslation(-0.5,-0.5,0)*XMMatrixRotationRollPitchYaw(0, 0, gt.DeltaTime()*3)* XMMatrixTranslation(0.5,0.5, 0));
-			rItem->NumFramesDirty = gNumFrameResources;
-		}
-	}
+	
     // Cycle through the circular frame resource array.
     mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
     mCurrFrameResource = mFrameResources[mCurrFrameResourceIndex].get();
@@ -348,10 +353,19 @@ void TexColumnsApp::Update(const GameTimer& gt)
         CloseHandle(eventHandle);
     }
 
+
+	// === ImGui Setup ===
+	ImGui_ImplDX12_NewFrame();
+	ImGui_ImplWin32_NewFrame();
+	ImGui::NewFrame();
+	ImGui::Begin("Settings");
+	
+	UpdateMainPassCB(gt);
 	AnimateMaterials(gt);
 	UpdateObjectCBs(gt);
 	UpdateMaterialCBs(gt);
-	UpdateMainPassCB(gt);
+
+	ImGui::End();
 }
 
 void TexColumnsApp::Draw(const GameTimer& gt)
@@ -365,8 +379,12 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 
     // A command list can be reset after it has been added to the command queue via ExecuteCommandList.
     // Reusing the command list reuses memory.
-    ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
-
+	if (isFillModeSolid)
+	{
+		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["solid"].Get()));
+	}
+	else 
+		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["wireframe"].Get()));
     mCommandList->RSSetViewports(1, &mScreenViewport);
     mCommandList->RSSetScissorRects(1, &mScissorRect);
 
@@ -387,15 +405,26 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
 	auto passCB = mCurrFrameResource->PassCB->Resource();
-	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
 
-
+	
+	
     DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+
+	ImGui::Render();
+	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
+
+
 
 
     // Indicate a state transition on the resource usage.
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
 		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+
+
+
+
+
 
     // Done recording commands.
     ThrowIfFailed(mCommandList->Close());
@@ -432,29 +461,33 @@ void TexColumnsApp::OnMouseUp(WPARAM btnState, int x, int y)
 
 void TexColumnsApp::OnMouseMove(WPARAM btnState, int x, int y)
 {
-	if ((btnState & MK_LBUTTON) != 0)
+	if (!ImGui::GetIO().WantCaptureMouse)
 	{
-		// Make each pixel correspond to a quarter of a degree.
-		float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
-		float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
+		if ((btnState & MK_LBUTTON) != 0)
+		{
+			// Make each pixel correspond to a quarter of a degree.
+			float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
+			float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
 
-		// Update angles based on input to orbit camera around box.
+			// Update angles based on input to orbit camera around box.
 
-		cam.YawPitch(dx, -dy);
+			cam.YawPitch(dx, -dy);
 
+		}
+		mLastMousePos.x = x;
+		mLastMousePos.y = y;
 	}
-	mLastMousePos.x = x;
-	mLastMousePos.y = y;
+	
 }
 
  
 void TexColumnsApp::OnKeyPressed(const GameTimer& gt, WPARAM key)
 {
-	if (GET_WHEEL_DELTA_WPARAM(key) > 0)
+	if (GET_WHEEL_DELTA_WPARAM(key) > 0 && !ImGui::GetIO().WantCaptureMouse)
 	{
 		cam.IncreaseSpeed(0.05);
 	}
-	else if (GET_WHEEL_DELTA_WPARAM(key) < 0)
+	else if (GET_WHEEL_DELTA_WPARAM(key) < 0 && !ImGui::GetIO().WantCaptureMouse)
 	{
 		cam.IncreaseSpeed(-0.05);
 	}
@@ -529,15 +562,16 @@ void TexColumnsApp::AnimateMaterials(const GameTimer& gt)
 void TexColumnsApp::UpdateObjectCBs(const GameTimer& gt)
 {
 	auto currObjectCB = mCurrFrameResource->ObjectCB.get();
+
 	for(auto& e : mAllRitems)
 	{
-
 		// Only update the cbuffer data if the constants have changed.  
 		// This needs to be tracked per frame resource.
 		if(e->NumFramesDirty > 0)
 		{
 			XMMATRIX world = XMLoadFloat4x4(&e->World);
 			XMMATRIX texTransform = XMLoadFloat4x4(&e->TexTransform);
+
 
 			ObjectConstants objConstants;
 			XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
@@ -595,7 +629,7 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
 	XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
 	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
-	mMainPassCB.EyePosW = mEyePos;
+	XMStoreFloat3(&mMainPassCB.EyePosW, cam.GetPosition());
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
 	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
 	mMainPassCB.NearZ = 1.0f;
@@ -603,12 +637,38 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
 	mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
-	mMainPassCB.Lights[0].Position = { 0.0f, 6.0f, 10.0f };
-	mMainPassCB.Lights[0].Strength = { 2, 2, 2 };
-	mMainPassCB.Lights[0].FalloffEnd = 100.f;
+
+
 
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
+
+	// Controls for light settings
+	ImGui::PushID(0);
+	ImGui::Text("Displacement settings");
+	ImGui::SliderFloat("Disp Value", (float*)&mMainPassCB.gDisplacementScale, 0.f, 3.f);
+	ImGui::PopID();
+
+	ImGui::PushID(1);
+	ImGui::Text("Light settings");
+	ImGui::SliderFloat3("Position", (float*)&mMainPassCB.Lights[0].Position, -20.f, 20.f);
+	static float strength = 1;
+	ImGui::SliderFloat("Strength", (float*)&strength, 0.f, 3.f);
+	mMainPassCB.Lights[0].Strength = XMFLOAT3(strength, strength, strength);
+	ImGui::SliderFloat("FallofEnd", (float*)&mMainPassCB.Lights[0].FalloffEnd, 0.f, 100.f);
+	ImGui::PopID();
+
+	ImGui::PushID(2);
+	ImGui::Text("Tesselation settings");
+	ImGui::SliderFloat("Tesselation Max Value", (float*)&mMainPassCB.gTessFactorMax,1.f, 8.f);
+	ImGui::SliderFloat("Tesselation Radius Value", (float*)&mMainPassCB.gMaxTessDistance,20.f, 100.f);
+	ImGui::PopID();
+	
+	ImGui::PushID(3);
+	ImGui::Text("Other settings");
+	ImGui::Checkbox("FillMode Solid", &isFillModeSolid);
+	ImGui::PopID();
+
 }
 
 void TexColumnsApp::LoadAllTextures()
@@ -647,21 +707,25 @@ void TexColumnsApp::BuildRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE normalRange;
 	normalRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);  // Нормальная карта в регистре t1
 
+	CD3DX12_DESCRIPTOR_RANGE dispMap;
+	dispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);  // Dispmap в регистре t2
+
     // Root parameter can be a table, root descriptor or root constants.
-    CD3DX12_ROOT_PARAMETER slotRootParameter[5];
+    CD3DX12_ROOT_PARAMETER slotRootParameter[6];
 
 	// Perfomance TIP: Order from most frequent to least frequent.
 	slotRootParameter[0].InitAsDescriptorTable(1, &diffuseRange, D3D12_SHADER_VISIBILITY_ALL);
 	slotRootParameter[1].InitAsDescriptorTable(1, &normalRange, D3D12_SHADER_VISIBILITY_ALL);
+	slotRootParameter[2].InitAsDescriptorTable(1, &dispMap, D3D12_SHADER_VISIBILITY_ALL);
 
-    slotRootParameter[2].InitAsConstantBufferView(0); // register b0
-    slotRootParameter[3].InitAsConstantBufferView(1); // register b1
-    slotRootParameter[4].InitAsConstantBufferView(2); // register b2
+    slotRootParameter[3].InitAsConstantBufferView(0); // register b0
+    slotRootParameter[4].InitAsConstantBufferView(1); // register b1
+    slotRootParameter[5].InitAsConstantBufferView(2); // register b2
 
 	auto staticSamplers = GetStaticSamplers();
 
     // A root signature is an array of root parameters.
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(5, slotRootParameter,
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(6, slotRootParameter,
 		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -683,7 +747,7 @@ void TexColumnsApp::BuildRootSignature()
         serializedRootSig->GetBufferSize(),
         IID_PPV_ARGS(mRootSignature.GetAddressOf())));
 }
-void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness)
+void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, int _SRVDispIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness)
 {
 	
 	auto material = std::make_unique<Material>();
@@ -691,6 +755,7 @@ void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiff
 	material->MatCBIndex = _CBIndex;
 	material->DiffuseSrvHeapIndex = _SRVDiffIndex;
 	material->NormalSrvHeapIndex = _SRVNMapIndex;
+	material->DispSrvHeapIndex = _SRVDispIndex;
 	material->DiffuseAlbedo = _DiffuseAlbedo;
 	material->FresnelR0 = _FresnelR0;
 	material->Roughness = _Roughness;
@@ -734,9 +799,12 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 		NULL, NULL
 	};
 
+	// Примерно так:
+	mShaders["standardHS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "HSMain", "hs_5_1");
+	mShaders["standardDS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "DSMain", "ds_5_1");
+	// VS и PS остаются как есть или немного модифицируются для правильных входов/выходов
 	mShaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
-	
     mInputLayout =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -849,7 +917,7 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 		b = b.substr(0, b.length() - 4);
 		std::cout << "NORMAL: " << b << "\n";
 
-		CreateMaterial(scene->mMaterials[k]->GetName().C_Str(), k, TexOffsets[a], TexOffsets[b], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+		CreateMaterial(scene->mMaterials[k]->GetName().C_Str(), k, TexOffsets[a], TexOffsets[b], TexOffsets[b], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	}
 
 	UINT totalMeshSize = 0;
@@ -1046,24 +1114,77 @@ void TexColumnsApp::BuildPSOs()
 		reinterpret_cast<BYTE*>(mShaders["standardVS"]->GetBufferPointer()), 
 		mShaders["standardVS"]->GetBufferSize()
 	};
+	opaquePsoDesc.HS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["standardHS"]->GetBufferPointer()),
+		mShaders["standardHS"]->GetBufferSize()
+	};
+	opaquePsoDesc.DS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["standardDS"]->GetBufferPointer()),
+		mShaders["standardDS"]->GetBufferSize()
+	};
 	opaquePsoDesc.PS = 
 	{ 
 		reinterpret_cast<BYTE*>(mShaders["opaquePS"]->GetBufferPointer()),
 		mShaders["opaquePS"]->GetBufferSize()
 	};
 	opaquePsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	opaquePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; // Изменяем Solid на Wireframe
-
+	opaquePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 	opaquePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	opaquePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	opaquePsoDesc.SampleMask = UINT_MAX;
-	opaquePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	opaquePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
 	opaquePsoDesc.NumRenderTargets = 1;
 	opaquePsoDesc.RTVFormats[0] = mBackBufferFormat;
 	opaquePsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
 	opaquePsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	opaquePsoDesc.DSVFormat = mDepthStencilFormat;
-    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
+    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&mPSOs["wireframe"])));
+
+
+
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC solidPsoDesc;
+
+	//
+	// PSO for opaque objects.
+	//
+	ZeroMemory(&solidPsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
+	solidPsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
+	solidPsoDesc.pRootSignature = mRootSignature.Get();
+	solidPsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["standardVS"]->GetBufferPointer()),
+		mShaders["standardVS"]->GetBufferSize()
+	};
+	solidPsoDesc.HS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["standardHS"]->GetBufferPointer()),
+		mShaders["standardHS"]->GetBufferSize()
+	};
+	solidPsoDesc.DS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["standardDS"]->GetBufferPointer()),
+		mShaders["standardDS"]->GetBufferSize()
+	};
+	solidPsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["opaquePS"]->GetBufferPointer()),
+		mShaders["opaquePS"]->GetBufferSize()
+	};
+	solidPsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	solidPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	solidPsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	solidPsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	solidPsoDesc.SampleMask = UINT_MAX;
+	solidPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
+	solidPsoDesc.NumRenderTargets = 1;
+	solidPsoDesc.RTVFormats[0] = mBackBufferFormat;
+	solidPsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
+	solidPsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
+	solidPsoDesc.DSVFormat = mDepthStencilFormat;
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&solidPsoDesc, IID_PPV_ARGS(&mPSOs["solid"])));
 }
 
 void TexColumnsApp::BuildFrameResources()
@@ -1089,12 +1210,12 @@ void TexColumnsApp::BuildFrameResources()
 
 void TexColumnsApp::BuildMaterials()
 {
-	CreateMaterial("NiggaMat",0, TexOffsets["textures/texture"], TexOffsets["textures/texture_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("eye",0, TexOffsets["textures/eye"], TexOffsets["textures/eye_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("map",0, TexOffsets["textures/HeightMap2"], TexOffsets["textures/HeightMap2"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("map2",0, TexOffsets["textures/HeightMap"], TexOffsets["textures/HeightMap"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("bricks",0, TexOffsets["textures/bricks"], TexOffsets["textures/bricks"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("prikol1",0, TexOffsets["textures/prikol2"], TexOffsets["textures/prikol2"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	/*CreateMaterial("NiggaMat", 0, TexOffsets["textures/texture"], TexOffsets["textures/texture_nm"], _заполнитель_, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("eye", 0, TexOffsets["textures/eye"], TexOffsets["textures/eye_nm"], _заполнитель_, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("map", 0, TexOffsets["textures/HeightMap2"], TexOffsets["textures/HeightMap2"], _заполнитель_, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);*/
+	CreateMaterial("map2", 0, TexOffsets["textures/stone"], TexOffsets["textures/stone_nmap"], TexOffsets["textures/stone_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("bricks2", 0, TexOffsets["textures/redbrick_diff"], TexOffsets["textures/redbrick_nmap"], TexOffsets["textures/redbrick_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	
 }
 void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation)
 {
@@ -1126,24 +1247,37 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 
 void TexColumnsApp::BuildRenderItems()
 {
-	/*auto boxRitem = std::make_unique<RenderItem>();
-	boxRitem->Name = "box";
-	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 1.0f, 3.0f));
+	auto boxRitem = std::make_unique<RenderItem>();
+	boxRitem->Name = "plane";
+	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(1.0f, 1.0f,1.0f) * XMMatrixTranslation(0.0f, -1.0f, 3.0f));
 	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1,1,1));
 	boxRitem->ObjCBIndex = 0;
-	boxRitem->Mat = mMaterials["prikol1"].get();
+	boxRitem->Mat = mMaterials["map2"].get();
 	boxRitem->Geo = mGeometries["shapeGeo"].get();
 	boxRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["box"].IndexCount;
-	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
-	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
-	mAllRitems.push_back(std::move(boxRitem));*/
+	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["grid"].IndexCount;
+	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["grid"].StartIndexLocation;
+	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["grid"].BaseVertexLocation;
+	mAllRitems.push_back(std::move(boxRitem));
 
-	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
-	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 3, 0));
+	auto box1Ritem = std::make_unique<RenderItem>();
+	box1Ritem->Name = "plane2";
+	XMStoreFloat4x4(&box1Ritem->World, XMMatrixScaling(1.0f, 1.0f, 1.0f) * XMMatrixTranslation(20.0f, -1.0f, 3.0f));
+	XMStoreFloat4x4(&box1Ritem->TexTransform, XMMatrixScaling(1, 1, 1));
+	box1Ritem->ObjCBIndex = 1;
+	box1Ritem->Mat = mMaterials["bricks2"].get();
+	box1Ritem->Geo = mGeometries["shapeGeo"].get();
+	box1Ritem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	box1Ritem->IndexCount = box1Ritem->Geo->DrawArgs["grid"].IndexCount;
+	box1Ritem->StartIndexLocation = box1Ritem->Geo->DrawArgs["grid"].StartIndexLocation;
+	box1Ritem->BaseVertexLocation = box1Ritem->Geo->DrawArgs["grid"].BaseVertexLocation;
+	mAllRitems.push_back(std::move(box1Ritem));
+
+	//RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
+/*	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 3, 0));
 	RenderCustomMesh("eyeL", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	RenderCustomMesh("eyeR", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
-	//RenderCustomMesh("plan", "plane2", "map", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,-10,0));
+	*///RenderCustomMesh("plan", "plane2", "map", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,-10,0));
 	//RenderCustomMesh("plan", "plane2", "map2", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,10,0));
 	// All the render items are opaque.
 	for (auto& e : mAllRitems)
@@ -1170,7 +1304,7 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
         auto ri = ritems[i];
         cmdList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
         cmdList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
-        cmdList->IASetPrimitiveTopology(ri->PrimitiveType);
+        cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
 
 		CD3DX12_GPU_DESCRIPTOR_HANDLE diffuseHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 		diffuseHandle.Offset(ri->Mat->DiffuseSrvHeapIndex, mCbvSrvDescriptorSize);
@@ -1178,6 +1312,10 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 		CD3DX12_GPU_DESCRIPTOR_HANDLE normalHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 		normalHandle.Offset(ri->Mat->NormalSrvHeapIndex, mCbvSrvDescriptorSize);
 		cmdList->SetGraphicsRootDescriptorTable(1, normalHandle);
+		CD3DX12_GPU_DESCRIPTOR_HANDLE dispHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+		dispHandle.Offset(ri->Mat->DispSrvHeapIndex, mCbvSrvDescriptorSize);
+		cmdList->SetGraphicsRootDescriptorTable(2, dispHandle);
+
 
 		//// Получаем дескриптор для нормальной карты по её оффсету.
 		//CD3DX12_GPU_DESCRIPTOR_HANDLE normalHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
@@ -1187,8 +1325,8 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
         D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex*objCBByteSize;
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex*matCBByteSize;
 
-        cmdList->SetGraphicsRootConstantBufferView(2, objCBAddress);
-        cmdList->SetGraphicsRootConstantBufferView(4, matCBAddress);
+        cmdList->SetGraphicsRootConstantBufferView(3, objCBAddress);
+        cmdList->SetGraphicsRootConstantBufferView(5, matCBAddress);
 
         cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
     }

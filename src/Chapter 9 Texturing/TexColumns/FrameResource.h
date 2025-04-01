@@ -27,14 +27,20 @@ struct PassConstants
     float FarZ = 0.0f;
     float TotalTime = 0.0f;
     float DeltaTime = 0.0f;
-
     DirectX::XMFLOAT4 AmbientLight = { 0.0f, 0.0f, 0.0f, 1.0f };
+    Light Lights[MaxLights];
+
+    float gTessFactorMin = 1.f; // Минимальный фактор тесселяции ребер
+    float gTessFactorMax = 3.f; // Максимальный фактор тесселяции ребер
+    float gTessInsideFactor = 1.f; // Фактор тесселяции внутри патча (можно тоже сделать динамическим)
+    float gMaxTessDistance = 20.f; // Расстояние, на котором достигается мин. тесселяция
+    float gDisplacementScale = 0.7f; // Масштаб смещения
+
 
     // Indices [0, NUM_DIR_LIGHTS) are directional lights;
     // indices [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS) are point lights;
     // indices [NUM_DIR_LIGHTS+NUM_POINT_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHT+NUM_SPOT_LIGHTS)
     // are spot lights for a maximum of MaxLights per object.
-    Light Lights[MaxLights];
 };
 
 struct Vertex
