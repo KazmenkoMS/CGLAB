@@ -215,7 +215,7 @@ bool TexColumnsApp::Initialize()
 	freopen("CONOUT$", "w", stdout);
 	freopen("CONOUT$", "w", stderr);
 
-	cam.SetPosition(-10, 5, 40);
+	cam.SetPosition(0,5,0);
 	cam.RotateY(MathHelper::Pi);
     if(!D3DApp::Initialize())
         return false;
@@ -405,7 +405,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
 	auto passCB = mCurrFrameResource->PassCB->Resource();
-	mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(5, passCB->GetGPUVirtualAddress());
 
 	
 	
@@ -639,6 +639,19 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
 
 
+	XMVECTOR decalPos = XMLoadFloat3(&mMainPassCB.decalPosition);
+	float scale = 0.01;
+	XMVECTOR decalCamPos = decalPos + XMVectorSet(0.0f, scale * 0.5f, 0.0f, 0.0f); // Смещаем вверх
+	XMVECTOR target = decalPos;
+	XMVECTOR up = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f); // Направление "вверх" для проектора (ось Z)
+
+	XMMATRIX decalView = XMMatrixLookAtLH(decalCamPos, target, up);
+	// Ортографическая проекция размером DecalSize x DecalSize, глубина DecalSize
+	XMMATRIX decalProj = XMMatrixOrthographicLH(scale, scale, 0.0f, 1); // Near=0, Far=DecalSize
+
+	// Транспонируем перед отправкой в константный буфер
+	XMStoreFloat4x4(&mMainPassCB.DecalViewProj, XMMatrixTranspose(decalView * decalProj));
+	// --- Конец расчета матрицы ---
 
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
@@ -669,6 +682,15 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	ImGui::Text("Other settings");
 	ImGui::Checkbox("FillMode Solid", &isFillModeSolid);
 	ImGui::Checkbox("Fix Tess Level", (bool*) & mMainPassCB.fixTessLevel);
+	ImGui::SliderFloat3("decal position", (float*) & mMainPassCB.decalPosition, -40, 40);
+	ImGui::SliderFloat("decal radius", (float*) & mMainPassCB.DecalRadius, 0, 10);
+	ImGui::SliderFloat("decal faloff", (float*) & mMainPassCB.DecalFalloffRadius, 0, 30);
+	XMFLOAT2 texcoords = XMFLOAT2(mMainPassCB.decalPosition.x / 30, mMainPassCB.decalPosition.z / 30);
+	//ImGui::SliderFloat2("tex coords", (float*)&texcoords, -10, 10);
+
+	XMStoreFloat4x4(&mMainPassCB.DecalTexTransform, XMMatrixTranspose(XMMatrixScaling(1,1,1)*XMMatrixTranslation(-texcoords.x, texcoords.y, texcoords.y)));
+
+
 
 	ImGui::PopID();
 
@@ -713,22 +735,26 @@ void TexColumnsApp::BuildRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE dispMap;
 	dispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);  // Dispmap в регистре t2
 
+	CD3DX12_DESCRIPTOR_RANGE decaldispMap;
+	decaldispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);  // Dispmap в регистре t3
+
     // Root parameter can be a table, root descriptor or root constants.
-    CD3DX12_ROOT_PARAMETER slotRootParameter[6];
+    CD3DX12_ROOT_PARAMETER slotRootParameter[7];
 
 	// Perfomance TIP: Order from most frequent to least frequent.
 	slotRootParameter[0].InitAsDescriptorTable(1, &diffuseRange, D3D12_SHADER_VISIBILITY_ALL);
 	slotRootParameter[1].InitAsDescriptorTable(1, &normalRange, D3D12_SHADER_VISIBILITY_ALL);
 	slotRootParameter[2].InitAsDescriptorTable(1, &dispMap, D3D12_SHADER_VISIBILITY_ALL);
+	slotRootParameter[3].InitAsDescriptorTable(1, &decaldispMap, D3D12_SHADER_VISIBILITY_ALL);
 
-    slotRootParameter[3].InitAsConstantBufferView(0); // register b0
-    slotRootParameter[4].InitAsConstantBufferView(1); // register b1
-    slotRootParameter[5].InitAsConstantBufferView(2); // register b2
+    slotRootParameter[4].InitAsConstantBufferView(0); // register b0
+    slotRootParameter[5].InitAsConstantBufferView(1); // register b1
+    slotRootParameter[6].InitAsConstantBufferView(2); // register b2
 
 	auto staticSamplers = GetStaticSamplers();
 
     // A root signature is an array of root parameters.
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(6, slotRootParameter,
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(7, slotRootParameter,
 		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -1255,7 +1281,7 @@ void TexColumnsApp::BuildRenderItems()
 	auto boxRitem = std::make_unique<RenderItem>();
 	boxRitem->Name = "plane";
 	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(1.0f, 1.0f,1.0f) * XMMatrixTranslation(0.0f, -1.0f, 3.0f));
-	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1,1,1));
+	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1,1,1)*XMMatrixTranslation(0,0,0));
 	boxRitem->ObjCBIndex = 0;
 	boxRitem->Mat = mMaterials["map2"].get();
 	boxRitem->Geo = mGeometries["shapeGeo"].get();
@@ -1346,6 +1372,9 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 		CD3DX12_GPU_DESCRIPTOR_HANDLE dispHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 		dispHandle.Offset(ri->Mat->DispSrvHeapIndex, mCbvSrvDescriptorSize);
 		cmdList->SetGraphicsRootDescriptorTable(2, dispHandle);
+		CD3DX12_GPU_DESCRIPTOR_HANDLE decaldispHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+		decaldispHandle.Offset(TexOffsets["textures/ochko"], mCbvSrvDescriptorSize);
+		cmdList->SetGraphicsRootDescriptorTable(3, decaldispHandle);
 
 
 		//// Получаем дескриптор для нормальной карты по её оффсету.
@@ -1356,8 +1385,8 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
         D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex*objCBByteSize;
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex*matCBByteSize;
 
-        cmdList->SetGraphicsRootConstantBufferView(3, objCBAddress);
-        cmdList->SetGraphicsRootConstantBufferView(5, matCBAddress);
+        cmdList->SetGraphicsRootConstantBufferView(4, objCBAddress);
+        cmdList->SetGraphicsRootConstantBufferView(6, matCBAddress);
 
         cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
     }

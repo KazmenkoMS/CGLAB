@@ -36,6 +36,13 @@ struct PassConstants
     float gMaxTessDistance = 100.f; // Расстояние, на котором достигается мин. тесселяция
     float gDisplacementScale = 2.f; // Масштаб смещения
     int fixTessLevel = true;
+    float DecalRadius = 10;         // 4 байта (Итого 16 байт)
+    float DecalFalloffRadius = 20;  // 4 байта (Начинается с 16 байт)
+    float DecalPadding;        // 4 байта (Начинается с 20 байт - чтобы выровнять?)
+    DirectX::XMFLOAT3 decalPosition = { 0,0,0 };
+    DirectX::XMFLOAT4X4 DecalViewProj;
+    DirectX::XMFLOAT4X4 DecalTexTransform;
+    float DecalPadding1;        // 4 байта (Начинается с 20 байт - чтобы выровнять?)
 
     // Indices [0, NUM_DIR_LIGHTS) are directional lights;
     // indices [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS) are point lights;
