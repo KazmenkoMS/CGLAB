@@ -60,9 +60,10 @@ cbuffer cbPass : register(b1)
     
     float gTessFactorMin; // Минимальный фактор тесселяции ребер
     float gTessFactorMax; // Максимальный фактор тесселяции ребер
-    float gTessInsideFactor; // Фактор тесселяции внутри патча (можно тоже сделать динамическим)
+    int gTessLevel; // Фактор тесселяции внутри патча (можно тоже сделать динамическим)
     float gMaxTessDistance; // Расстояние, на котором достигается мин. тесселяция
     float gDisplacementScale; // Масштаб смещения
+    int fixTessLevel;
     // Indices [0, NUM_DIR_LIGHTS) are directional lights;
     // indices [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS) are point lights;
     // indices [NUM_DIR_LIGHTS+NUM_POINT_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHT+NUM_SPOT_LIGHTS)
@@ -167,7 +168,11 @@ VertexOutHSIn VS(VertexIn vin)
     return vout;
 }
 
-
+float exponential_interpolation_exp(float a, float b, float alpha)
+{
+    float exponent = 3.0; // Можно настроить для изменения скорости
+    return a + (b - a) * (exp(alpha * exponent) - 1.0) / (exp(exponent) - 1.0);
+}
 // Функция для вычисления факторов тесселяции на основе расстояния
 PatchTess CalcTessFactors(float3 p0, float3 p1, float3 p2)
 {
@@ -178,8 +183,12 @@ PatchTess CalcTessFactors(float3 p0, float3 p1, float3 p2)
     float distToEye = distance(patchCenterW, gEyePosW);
     
     // Линейно интерполируем фактор тесселяции между min и max в зависимости от расстояния
-    float tessFactor = lerp(gTessFactorMax, gTessFactorMin, saturate(distToEye / gMaxTessDistance));
-
+    float tessFactor = exponential_interpolation_exp(gTessFactorMin, gTessFactorMax,1 - saturate(distToEye / gMaxTessDistance));
+    tessFactor = int(tessFactor);
+    if (fixTessLevel==1)
+    {
+        tessFactor = gTessLevel;
+    }
     // Устанавливаем факторы для ребер и внутренней части
     // Можно вычислять индивидуально для каждого ребра для адаптивности
     pt.EdgeTess[0] = tessFactor;
@@ -189,6 +198,17 @@ PatchTess CalcTessFactors(float3 p0, float3 p1, float3 p2)
 
     return pt;
 }
+
+
+
+
+
+
+
+
+
+
+
 
 // HS Constant Function
 
@@ -204,7 +224,7 @@ PatchTess HSConst(InputPatch<VertexOutHSIn, 3> patch) // 3 контрольные точки для
 [outputtopology("triangle_cw")] // Выходные примитивы - треугольники по часовой стрелке
 [outputcontrolpoints(3)] // 3 контрольные точки на выходе
 [patchconstantfunc("HSConst")] // Указываем константную функцию
-
+[maxtessfactor(64.0)]
 
 HSOutDSIn HSMain(InputPatch<VertexOutHSIn, 3> patch, uint i : SV_OutputControlPointID)
 {
@@ -235,10 +255,6 @@ DSOutPSIn DSMain(PatchTess patchTessConstants,
     dout.TexC = domainLoc.x * patch[0].TexC + domainLoc.y * patch[1].TexC + domainLoc.z * patch[2].TexC;
     dout.TanW = domainLoc.x * patch[0].TanW + domainLoc.y * patch[1].TanW + domainLoc.z * patch[2].TanW;
 
-    // Нормализуем интерполированные векторы (важно для нормалей и касательных)
-    dout.NormalW = normalize(dout.NormalW);
-    dout.TanW = normalize(dout.TanW);
-
     // 2. Сэмплирование карты смещения (ЗАКОММЕНТИРОВАНО / УДАЛЕНО)
     float displacementValue = gDispMap.SampleLevel(gsamLinearWrap, dout.TexC, 0.0f).r;
 
@@ -247,6 +263,10 @@ DSOutPSIn DSMain(PatchTess patchTessConstants,
     dout.PosW += displacementOffset * dout.NormalW; // <- ЭТО УБРАНО
 
     // 4. Пересчет нормали/касательной (НЕ ТРЕБУЕТСЯ, так как смещения нет)
+    // Нормализуем интерполированные векторы (важно для нормалей и касательных)
+    dout.NormalW = normalize(dout.NormalW);
+    dout.TanW = normalize(dout.TanW);
+
 
     // 5. Трансформация ИНТЕРПОЛИРОВАННОЙ мировой позиции в Clip Space
     dout.PosH = mul(float4(dout.PosW, 1.0f), gViewProj);

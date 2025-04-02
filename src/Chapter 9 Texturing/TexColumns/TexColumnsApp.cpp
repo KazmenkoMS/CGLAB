@@ -215,7 +215,7 @@ bool TexColumnsApp::Initialize()
 	freopen("CONOUT$", "w", stdout);
 	freopen("CONOUT$", "w", stderr);
 
-	cam.SetPosition(0, 3, 10);
+	cam.SetPosition(-10, 5, 40);
 	cam.RotateY(MathHelper::Pi);
     if(!D3DApp::Initialize())
         return false;
@@ -646,13 +646,13 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	// Controls for light settings
 	ImGui::PushID(0);
 	ImGui::Text("Displacement settings");
-	ImGui::SliderFloat("Disp Value", (float*)&mMainPassCB.gDisplacementScale, 0.f, 3.f);
+	ImGui::SliderFloat("Disp Value", (float*)&mMainPassCB.gDisplacementScale, 0.f, 5.f);
 	ImGui::PopID();
 
 	ImGui::PushID(1);
 	ImGui::Text("Light settings");
 	ImGui::SliderFloat3("Position", (float*)&mMainPassCB.Lights[0].Position, -20.f, 20.f);
-	static float strength = 1;
+	static float strength = mMainPassCB.Lights[0].Strength.x;
 	ImGui::SliderFloat("Strength", (float*)&strength, 0.f, 3.f);
 	mMainPassCB.Lights[0].Strength = XMFLOAT3(strength, strength, strength);
 	ImGui::SliderFloat("FallofEnd", (float*)&mMainPassCB.Lights[0].FalloffEnd, 0.f, 100.f);
@@ -660,13 +660,16 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 
 	ImGui::PushID(2);
 	ImGui::Text("Tesselation settings");
-	ImGui::SliderFloat("Tesselation Max Value", (float*)&mMainPassCB.gTessFactorMax,1.f, 8.f);
+	ImGui::SliderFloat("Tesselation Max Value", (float*)&mMainPassCB.gTessFactorMax,10.f, 64.f);
+	ImGui::SliderInt("Cur Tess Value", &mMainPassCB.gTessLevel,1, 64);
 	ImGui::SliderFloat("Tesselation Radius Value", (float*)&mMainPassCB.gMaxTessDistance,20.f, 100.f);
 	ImGui::PopID();
 	
 	ImGui::PushID(3);
 	ImGui::Text("Other settings");
 	ImGui::Checkbox("FillMode Solid", &isFillModeSolid);
+	ImGui::Checkbox("Fix Tess Level", (bool*) & mMainPassCB.fixTessLevel);
+
 	ImGui::PopID();
 
 }
@@ -961,7 +964,7 @@ void TexColumnsApp::BuildShapeGeometry()
 {
     GeometryGenerator geoGen;
 	GeometryGenerator::MeshData box = geoGen.CreateBox(1.0f, 1.0f, 1.0f, 3);
-	GeometryGenerator::MeshData grid = geoGen.CreateGrid(20.0f, 30.0f, 60, 40);
+	GeometryGenerator::MeshData grid = geoGen.CreateGrid(30.0f, 30.0f, 10, 10);
 	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 20, 20);
 	GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
 
@@ -1215,6 +1218,8 @@ void TexColumnsApp::BuildMaterials()
 	CreateMaterial("map", 0, TexOffsets["textures/HeightMap2"], TexOffsets["textures/HeightMap2"], _заполнитель_, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);*/
 	CreateMaterial("map2", 0, TexOffsets["textures/stone"], TexOffsets["textures/stone_nmap"], TexOffsets["textures/stone_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("bricks2", 0, TexOffsets["textures/redbrick_diff"], TexOffsets["textures/redbrick_nmap"], TexOffsets["textures/redbrick_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("bricks3", 0, TexOffsets["textures/rock"], TexOffsets["textures/rock_nmap"], TexOffsets["textures/rock_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("rocks", 0, TexOffsets["textures/rocks"], TexOffsets["textures/rocks_nmap"], TexOffsets["textures/rocks_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	
 }
 void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation)
@@ -1262,7 +1267,7 @@ void TexColumnsApp::BuildRenderItems()
 
 	auto box1Ritem = std::make_unique<RenderItem>();
 	box1Ritem->Name = "plane2";
-	XMStoreFloat4x4(&box1Ritem->World, XMMatrixScaling(1.0f, 1.0f, 1.0f) * XMMatrixTranslation(20.0f, -1.0f, 3.0f));
+	XMStoreFloat4x4(&box1Ritem->World, XMMatrixScaling(1.0f, 1.0f, 1.0f) * XMMatrixTranslation(30.0f, -1.0f, 3.0f));
 	XMStoreFloat4x4(&box1Ritem->TexTransform, XMMatrixScaling(1, 1, 1));
 	box1Ritem->ObjCBIndex = 1;
 	box1Ritem->Mat = mMaterials["bricks2"].get();
@@ -1272,6 +1277,32 @@ void TexColumnsApp::BuildRenderItems()
 	box1Ritem->StartIndexLocation = box1Ritem->Geo->DrawArgs["grid"].StartIndexLocation;
 	box1Ritem->BaseVertexLocation = box1Ritem->Geo->DrawArgs["grid"].BaseVertexLocation;
 	mAllRitems.push_back(std::move(box1Ritem));
+
+	auto box2Ritem = std::make_unique<RenderItem>();
+	box2Ritem->Name = "plane3";
+	XMStoreFloat4x4(&box2Ritem->World, XMMatrixScaling(1.0f, 1.0f, 1.0f) * XMMatrixTranslation(30.0f, -1.0f, 33.0f));
+	XMStoreFloat4x4(&box2Ritem->TexTransform, XMMatrixScaling(1, 1, 1));
+	box2Ritem->ObjCBIndex = 2;
+	box2Ritem->Mat = mMaterials["bricks3"].get();
+	box2Ritem->Geo = mGeometries["shapeGeo"].get();
+	box2Ritem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	box2Ritem->IndexCount = box2Ritem->Geo->DrawArgs["grid"].IndexCount;
+	box2Ritem->StartIndexLocation = box2Ritem->Geo->DrawArgs["grid"].StartIndexLocation;
+	box2Ritem->BaseVertexLocation = box2Ritem->Geo->DrawArgs["grid"].BaseVertexLocation;
+	mAllRitems.push_back(std::move(box2Ritem));
+
+	auto box3Ritem = std::make_unique<RenderItem>();
+	box3Ritem->Name = "plane4";
+	XMStoreFloat4x4(&box3Ritem->World, XMMatrixScaling(1.0f, 1.0f, 1.0f) * XMMatrixTranslation(0.0f, -1.0f, 33.0f));
+	XMStoreFloat4x4(&box3Ritem->TexTransform, XMMatrixScaling(1, 1, 1));
+	box3Ritem->ObjCBIndex = 3;
+	box3Ritem->Mat = mMaterials["rocks"].get();
+	box3Ritem->Geo = mGeometries["shapeGeo"].get();
+	box3Ritem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	box3Ritem->IndexCount = box3Ritem->Geo->DrawArgs["grid"].IndexCount;
+	box3Ritem->StartIndexLocation = box3Ritem->Geo->DrawArgs["grid"].StartIndexLocation;
+	box3Ritem->BaseVertexLocation = box3Ritem->Geo->DrawArgs["grid"].BaseVertexLocation;
+	mAllRitems.push_back(std::move(box3Ritem));
 
 	//RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
 /*	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 3, 0));
