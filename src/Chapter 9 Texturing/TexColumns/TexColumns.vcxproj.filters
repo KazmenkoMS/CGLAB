@@ -84,5 +84,7 @@
   <ItemGroup>
     <Text Include="Shaders\Default.hlsl" />
     <Text Include="Shaders\LightingUtil.hlsl" />
+    <Text Include="Shaders\LightingPass.hlsl" />
+    <Text Include="Shaders\GeometryPass.hlsl" />
   </ItemGroup>
 </Project>

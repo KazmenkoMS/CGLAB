@@ -65,7 +65,7 @@ protected:
 	bool InitDirect3D();
 	void CreateCommandObjects();
     void CreateSwapChain();
-
+	virtual void CreateGBuffer() {};
 	void FlushCommandQueue();
 
 	ID3D12Resource* CurrentBackBuffer()const;
