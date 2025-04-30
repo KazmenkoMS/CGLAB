@@ -1,17 +1,52 @@
 // LightingPass.hlsl
-#include "LightingUtil.hlsl"
-Texture2D gAlbedoMap : register(t0);
-Texture2D gNormalMap : register(t1);
-Texture2D gPositionMap : register(t2);
-SamplerState gsamLinear : register(s0);
 
-cbuffer cbPass : register(b1)
+// Defaults for number of lights.
+#ifndef NUM_DIR_LIGHTS
+    #define NUM_DIR_LIGHTS 1
+#endif
+
+#ifndef NUM_POINT_LIGHTS
+    #define NUM_POINT_LIGHTS 1
+#endif
+
+#ifndef NUM_SPOT_LIGHTS
+    #define NUM_SPOT_LIGHTS 0
+#endif
+#include "LightingUtil.hlsl"
+Texture2D gPositionMap : register(t2);
+Texture2D gNormalMap : register(t1);
+Texture2D gAlbedoMap : register(t0);
+
+SamplerState gsamPointWrap : register(s0);
+SamplerState gsamPointClamp : register(s1);
+SamplerState gsamLinearWrap : register(s2);
+SamplerState gsamLinearClamp : register(s3);
+SamplerState gsamAnisotropicWrap : register(s4);
+SamplerState gsamAnisotropicClamp : register(s5);
+
+cbuffer cbPass : register(b0)
 {
+    float4x4 gView;
+    float4x4 gInvView;
+    float4x4 gProj;
+    float4x4 gInvProj;
+    float4x4 gViewProj;
     float4x4 gInvViewProj;
     float3 gEyePosW;
-    float pad;
+    float cbPerObjectPad1;
+    float2 gRenderTargetSize;
+    float2 gInvRenderTargetSize;
+    float gNearZ;
+    float gFarZ;
+    float gTotalTime;
+    float gDeltaTime;
     float4 gAmbientLight;
-    Light gLights[MaxLights]; // или прописать явно количество, например Light gLights[3];
+
+    // Indices [0, NUM_DIR_LIGHTS) are directional lights;
+    // indices [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS) are point lights;
+    // indices [NUM_DIR_LIGHTS+NUM_POINT_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHT+NUM_SPOT_LIGHTS)
+    // are spot lights for a maximum of MaxLights per object.
+    Light gLights[MaxLights];
 };
 
 // Вершинный шейдер для полноэкранного треугольника
@@ -21,39 +56,48 @@ struct VSOut
     float2 TexC : TEXCOORD;
 };
 
-VSOut VS(uint VertexID : SV_VertexID)
+VSOut VS(uint vid : SV_VertexID)
 {
-    VSOut outt;
+    VSOut output;
+    
     // Координаты вершин полноэкранного треугольника
-    float2 verts[3] = { float2(-1, -1), float2(3, -1), float2(-1, 3) };
-    outt.PosH = float4(verts[VertexID], 0, 1);
-    outt.TexC = (verts[VertexID] + 1) * 0.5; // преобразуем из [-1,1] в [0,1]
-    return outt;
+    float2 positions[3] =
+    {
+        float2(-1, -1),
+        float2(3, -1),
+        float2(-1, 3)
+    };
+    
+    output.PosH = float4(positions[vid], 0, 1);
+    output.TexC = positions[vid] * float2(0.5, -0.5) + 0.5;
+    
+    return output;
 }
 
 // Пиксельный шейдер освещения
 float4 PS(VSOut pin) : SV_TARGET
 {
     // Вычитываем G-Buffer
-    float3 albedo = gAlbedoMap.Sample(gsamLinear, pin.TexC).rgb;
-    float3 normalW = normalize(gNormalMap.Sample(gsamLinear, pin.TexC).rgb);
-    float3 posW = gPositionMap.Sample(gsamLinear, pin.TexC).rgb;
+    float4 albedo = gAlbedoMap.Sample(gsamAnisotropicWrap, pin.TexC);
+    float3 normalW = normalize(gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb);
+   
+    float3 posW = gPositionMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
 
-    float3 viewDir = normalize(gEyePosW - posW);
+    float3 toEyeW = normalize(gEyePosW - posW);
 
-    // Начальный цвет от фонового света
-    float3 color = albedo * gAmbientLight.rgb;
+    // Light terms.
+    float4 ambient = gAmbientLight * albedo;
 
-    // Применяем все источники света
-    for (int i = 0; i < MaxLights; ++i)
+    Material mat =
     {
-        // Предположим, что gLights[i] – это направленный свет с полем Direction и Strength
-        float3 L = normalize(-gLights[i].Direction); // направление от точки к свету (для направленного света)
-        float NdotL = max(dot(normalW, L), 0.0f);
-        float3 diffuse = albedo * gLights[i].Strength * NdotL;
-        // (Простая ламбертова модель без зеркального блика)
-        color += diffuse;
-    }
+       albedo, float3(0.05, 0.05, 0.05), 0.7
+    };
+    float3 shadowFactor = 1.0f;
+    float4 directLight = ComputeLighting(gLights, mat, posW,
+        normalW, toEyeW, shadowFactor)/3;
+    float4 litColor = directLight;
+    // Common convention to take alpha from diffuse albedo.
+    litColor.a = albedo.a;
 
-    return float4(color, 1.0f);
+    return litColor;
 }

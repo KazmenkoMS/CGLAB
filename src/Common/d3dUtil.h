@@ -222,6 +222,10 @@ struct Light
     float FalloffEnd = 10.0f;                           // point/spot light only
     DirectX::XMFLOAT3 Position = { 0.0f, 0.0f, 0.0f };  // point/spot light only
     float SpotPower = 64.0f;                            // spot light only
+    int type = 0;
+    int type1;
+    int type2;
+    int type3;
 };
 
 #define MaxLights 16

@@ -14,6 +14,11 @@ struct Light
     float FalloffEnd;   // point/spot light only
     float3 Position;    // point light only
     float SpotPower;    // spot light only
+    int type;
+    int type1;
+    int type2;
+    int type3;
+    
 };
 
 struct Material
@@ -141,31 +146,25 @@ float4 ComputeLighting(Light gLights[MaxLights], Material mat,
                        float3 shadowFactor)
 {
     float3 result = 0.0f;
-
-    int i = 0;
-
-#if (NUM_DIR_LIGHTS > 0)
-    for(i = 0; i < NUM_DIR_LIGHTS; ++i)
+    
+    for (int i = 0; i < 2; ++i)
     {
-        result += shadowFactor[i] * ComputeDirectionalLight(gLights[i], mat, normal, toEye);
+        if (gLights[i].type == 1)
+        {
+            result += shadowFactor[i] * ComputeDirectionalLight(gLights[i], mat, normal, toEye);
+        }
+        else if (gLights[i].type == 2)
+        {
+            result += ComputePointLight(gLights[i], mat, pos, normal, toEye);
+        }
+        else if (gLights[i].type == 3)
+        {
+            result += ComputeSpotLight(gLights[i], mat, pos, normal, toEye);
+        }
     }
-#endif
 
-#if (NUM_POINT_LIGHTS > 0)
-    for(i = NUM_DIR_LIGHTS; i < NUM_DIR_LIGHTS+NUM_POINT_LIGHTS; ++i)
-    {
-        result += ComputePointLight(gLights[i], mat, pos, normal, toEye);
-    }
-#endif
 
-#if (NUM_SPOT_LIGHTS > 0)
-    for(i = NUM_DIR_LIGHTS + NUM_POINT_LIGHTS; i < NUM_DIR_LIGHTS + NUM_POINT_LIGHTS + NUM_SPOT_LIGHTS; ++i)
-    {
-        result += ComputeSpotLight(gLights[i], mat, pos, normal, toEye);
-    }
-#endif 
-
-    return float4(result, 0.0f);
+        return float4(result, 0.0f);
 }
 
 

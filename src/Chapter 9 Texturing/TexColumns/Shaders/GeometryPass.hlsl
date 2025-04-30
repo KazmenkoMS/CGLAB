@@ -130,14 +130,16 @@ PSOutput PS(VertexOut pin)
     // Обрабатываем нормаль: из карты или вершинная
     float3 normalW;
     // Сэмплируем карту нормалей в неликвидном пространстве (0..1 -> -1..1)
-    float3 normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).xyz * 2.0f - 1.0f;
-    
+    float3 normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).xyz;
+    pin.NormalW = normalize(pin.NormalW);
     normalW = NormalSampleToWorldSpace(normalSample.rgb, pin.NormalW, pin.Tan);;
 
-    outt.Normal = float4(normalW, 0.0f);
+    outt.Normal = float4(normalW, 1.0f);
 
     // Позиция в мировых координатах
     outt.Position = float4(pin.PosW, 1.0f);
 
+    
+    
     return outt;
 }

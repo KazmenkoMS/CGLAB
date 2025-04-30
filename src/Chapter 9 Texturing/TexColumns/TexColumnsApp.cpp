@@ -69,7 +69,7 @@ private:
     virtual void OnResize()override;
     virtual void Update(const GameTimer& gt)override;
     virtual void Draw(const GameTimer& gt)override;
-
+	virtual void DeferredDraw(const GameTimer& gt)override;
     virtual void OnMouseDown(WPARAM btnState, int x, int y)override;
     virtual void OnMouseUp(WPARAM btnState, int x, int y)override;
     virtual void OnMouseMove(WPARAM btnState, int x, int y)override;
@@ -149,6 +149,7 @@ private:
 	ComPtr<ID3D12Resource> mGBufferNormal;
 	ComPtr<ID3D12Resource> mGBufferAlbedo;
 	ComPtr<ID3D12Resource> mGBufferDepthStencil;
+	ComPtr<ID3D12DescriptorHeap> mGBufferSrvHeap = nullptr;
 
 	// Дескрипторы для G-Buffer
 	CD3DX12_CPU_DESCRIPTOR_HANDLE mGBufferRTVs[3]; // 0:Position, 1:Normal, 2:Albedo
@@ -251,8 +252,8 @@ bool TexColumnsApp::Initialize()
 	LoadAllTextures();
     BuildRootSignature();
     BuildLightingRootSignature();
-	BuildDescriptorHeaps();
 	CreateGBuffer();
+	BuildDescriptorHeaps();
     BuildShapeGeometry();
     BuildShadersAndInputLayout();
 	BuildMaterials();
@@ -385,68 +386,8 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	UpdateMainPassCB(gt);
 }
 
-void TexColumnsApp::Draw(const GameTimer& gt)
-{
-	
-    auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
-
-    // Reuse the memory associated with command recording.
-    // We can only reset when the associated command lists have finished execution on the GPU.
-    ThrowIfFailed(cmdListAlloc->Reset());
-
-    // A command list can be reset after it has been added to the command queue via ExecuteCommandList.
-    // Reusing the command list reuses memory.
-    ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
-
-    mCommandList->RSSetViewports(1, &mScreenViewport);
-    mCommandList->RSSetScissorRects(1, &mScissorRect);
-
-    // Indicate a state transition on the resource usage.
-	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
-		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
-
-    // Clear the back buffer and depth buffer.
-    mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
-    mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
-
-    // Specify the buffers we are going to render to.
-    mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
-
-	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
-	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
-
-	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-
-	auto passCB = mCurrFrameResource->PassCB->Resource();
-	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
 
 
-    DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
-
-
-    // Indicate a state transition on the resource usage.
-	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
-		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
-
-    // Done recording commands.
-    ThrowIfFailed(mCommandList->Close());
-
-    // Add the command list to the queue for execution.
-    ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
-    mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
-
-    // Swap the back and front buffers
-    ThrowIfFailed(mSwapChain->Present(1, 0));
-	mCurrBackBuffer = (mCurrBackBuffer + 1) % SwapChainBufferCount;
-
-    // Advance the fence value to mark commands up to this fence point.
-    mCurrFrameResource->Fence = ++mCurrentFence;
-
-    // Add an instruction to the command queue to set a new fence point. 
-    // Because we are on the GPU timeline, the new fence point won't be 
-    // set until the GPU finishes processing all the commands prior to this Signal().
-    mCommandQueue->Signal(mFence.Get(), mCurrentFence);
-}
 
 void TexColumnsApp::OnMouseDown(WPARAM btnState, int x, int y)
 {
@@ -634,10 +575,14 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
 	mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
-	mMainPassCB.Lights[0].Position = { 0.0f, 6.0f, 10.0f };
-	mMainPassCB.Lights[0].Strength = { 2, 2, 2 };
-	mMainPassCB.Lights[0].FalloffEnd = 100.f;
-
+	mMainPassCB.Lights[0].Position = { 0,10,0 };
+	mMainPassCB.Lights[0].Direction = { 0,-1,0 };
+	mMainPassCB.Lights[0].Strength = {2,2,2};
+	mMainPassCB.Lights[0].type = 1;
+	mMainPassCB.Lights[1].Position = { 0.0f, 6.0f, 10.0f };
+	mMainPassCB.Lights[1].Strength = { 4,4,4 };
+	mMainPassCB.Lights[1].FalloffEnd = 100.f;
+	mMainPassCB.Lights[1].type = 2;
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
 }
@@ -660,7 +605,7 @@ void TexColumnsApp::CreateGBuffer()
 	texDesc.SampleDesc.Count = 1;
 	texDesc.SampleDesc.Quality = 0;
 	texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-	texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+	texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET ;
 
 	// Создание ресурсов --------------------------------------------------------
 	// Position
@@ -704,9 +649,9 @@ void TexColumnsApp::CreateGBuffer()
 	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 	rtvDesc.Texture2D.MipSlice = 0;
 
-	// Position
-	rtvDesc.Format = positionFormat;
-	md3dDevice->CreateRenderTargetView(mGBufferPosition.Get(), &rtvDesc, rtvHandle);
+	// Albedo
+	rtvDesc.Format = albedoFormat;
+	md3dDevice->CreateRenderTargetView(mGBufferAlbedo.Get(), &rtvDesc, rtvHandle);
 	mGBufferRTVs[0] = rtvHandle;
 	rtvHandle.Offset(1, mRtvDescriptorSize);
 
@@ -715,15 +660,26 @@ void TexColumnsApp::CreateGBuffer()
 	md3dDevice->CreateRenderTargetView(mGBufferNormal.Get(), &rtvDesc, rtvHandle);
 	mGBufferRTVs[1] = rtvHandle;
 	rtvHandle.Offset(1, mRtvDescriptorSize);
-
-	// Albedo
-	rtvDesc.Format = albedoFormat;
-	md3dDevice->CreateRenderTargetView(mGBufferAlbedo.Get(), &rtvDesc, rtvHandle);
+	// Position
+	rtvDesc.Format = positionFormat;
+	md3dDevice->CreateRenderTargetView(mGBufferPosition.Get(), &rtvDesc, rtvHandle);
 	mGBufferRTVs[2] = rtvHandle;
 
 	// Создание SRV -------------------------------------------------------------
 	// В вашем коде SRV создаются в BuildDescriptorHeaps(), поэтому добавим их туда.
 	// Модифицируем BuildDescriptorHeaps():
+	D3D12_DESCRIPTOR_HEAP_DESC GsrvHeapDesc = {};
+	GsrvHeapDesc.NumDescriptors = 3;
+	GsrvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	GsrvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&GsrvHeapDesc, IID_PPV_ARGS(&mGBufferSrvHeap)));
+
+
+	
+
+	//mGBufferSRVs[0] = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvHandle);
+
+	//mGBufferSRVs[2] = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvHandle);
 }
 
 
@@ -805,12 +761,18 @@ void TexColumnsApp::BuildLightingRootSignature()
 {
 
 
-	CD3DX12_DESCRIPTOR_RANGE gbufferTable;
-	gbufferTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0); // t0..t2
+	CD3DX12_DESCRIPTOR_RANGE gPosition;
+	gPosition.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0..t2
+	CD3DX12_DESCRIPTOR_RANGE gNormal;
+	gNormal.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1); // t0..t2
+	CD3DX12_DESCRIPTOR_RANGE gAlbedo;
+	gAlbedo.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2); // t0..t2
 
-	CD3DX12_ROOT_PARAMETER rootParams[2];
-	rootParams[0].InitAsDescriptorTable(1, &gbufferTable, D3D12_SHADER_VISIBILITY_PIXEL);
-	rootParams[1].InitAsConstantBufferView(1); // b1 - PassCB (камеры и источники света)
+	CD3DX12_ROOT_PARAMETER rootParams[4];
+	rootParams[0].InitAsDescriptorTable(1, &gPosition, D3D12_SHADER_VISIBILITY_ALL);
+	rootParams[1].InitAsDescriptorTable(1, &gNormal, D3D12_SHADER_VISIBILITY_ALL);
+	rootParams[2].InitAsDescriptorTable(1, &gAlbedo, D3D12_SHADER_VISIBILITY_ALL);
+	rootParams[3].InitAsConstantBufferView(0); // b1 - PassCB (камеры и источники света)
 
 	auto staticSamplers = GetStaticSamplers();
 
@@ -819,13 +781,23 @@ void TexColumnsApp::BuildLightingRootSignature()
 		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
-	ComPtr<ID3DBlob> serializedRS, errorBlob;
-	D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1,
-		&serializedRS, &errorBlob);
-	md3dDevice->CreateRootSignature(0, serializedRS->GetBufferPointer(),
-		serializedRS->GetBufferSize(), IID_PPV_ARGS(&mLightingRootSignature));
 
+	ComPtr<ID3DBlob> serializedRootSig = nullptr;
+	ComPtr<ID3DBlob> errorBlob = nullptr;
+	HRESULT hr = D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
 
+	if (errorBlob != nullptr)
+	{
+		::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+	}
+	ThrowIfFailed(hr);
+
+	ThrowIfFailed(md3dDevice->CreateRootSignature(
+		0,
+		serializedRootSig->GetBufferPointer(),
+		serializedRootSig->GetBufferSize(),
+		IID_PPV_ARGS(mLightingRootSignature.GetAddressOf())));
 }
 
 void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness)
@@ -865,6 +837,10 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	int offset = 0;
 	for (const auto& tex : mTextures) {
 		auto text = tex.second->Resource;
+		DXGI_FORMAT format = text->GetDesc().Format;
+		if (format == DXGI_FORMAT_UNKNOWN) {
+			abort();
+		}
 		srvDesc.Format = text->GetDesc().Format;
 		srvDesc.Texture2D.MipLevels = text->GetDesc().MipLevels;
 		md3dDevice->CreateShaderResourceView(text.Get(), &srvDesc, hDescriptor);
@@ -872,34 +848,28 @@ void TexColumnsApp::BuildDescriptorHeaps()
 		TexOffsets[tex.first] = offset;
 		offset++;
 	}
-
-	// Добавляем SRV для G-Buffer после текстур материалов
-	CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(
-		mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
-		mTextures.size(), // После всех текстур
-		mCbvSrvDescriptorSize
-	);
-
-	// Position SRV
-	srvDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+	srvDesc.Texture2D.MipLevels = 1;
+	// Albedo SRV
+	srvDesc.Format = albedoFormat;
 	md3dDevice->CreateShaderResourceView(
-		mGBufferPosition.Get(), &srvDesc, srvHandle);
-	//mGBufferSRVs[0] = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvHandle);
-	srvHandle.Offset(1, mCbvSrvDescriptorSize);
+		mGBufferAlbedo.Get(), &srvDesc, hDescriptor);
+	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
 
 	// Normal SRV
-	srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	srvDesc.Format = normalFormat;
 	md3dDevice->CreateShaderResourceView(
-		mGBufferNormal.Get(), &srvDesc, srvHandle);
+		mGBufferNormal.Get(), &srvDesc, hDescriptor);
 	//mGBufferSRVs[1] = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvHandle);
-	srvHandle.Offset(1, mCbvSrvDescriptorSize);
-
-	// Albedo SRV
-	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+	// Position SRV
+	srvDesc.Format = positionFormat;
 	md3dDevice->CreateShaderResourceView(
-		mGBufferAlbedo.Get(), &srvDesc, srvHandle);
-	//mGBufferSRVs[2] = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvHandle);
-
+		mGBufferPosition.Get(), &srvDesc, hDescriptor);
+	HRESULT hr = md3dDevice->GetDeviceRemovedReason();
+	if (FAILED(hr))
+	{
+		std::cout << "Error creating SRV: " << std::hex << hr << std::endl;
+	}
 }
 
 void TexColumnsApp::BuildShadersAndInputLayout()
@@ -1263,9 +1233,9 @@ void TexColumnsApp::BuildPSOs()
 
 	// Теперь указываем несколько рендер-таргетов (G-Buffer)
 	gbPsoDesc.NumRenderTargets = 3;
-	gbPsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;     // альбедо
-	gbPsoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT; // нормали
-	gbPsoDesc.RTVFormats[2] = DXGI_FORMAT_R32G32B32A32_FLOAT; // позиция
+	gbPsoDesc.RTVFormats[0] = albedoFormat;     // альбедо
+	gbPsoDesc.RTVFormats[1] = normalFormat; // нормали
+	gbPsoDesc.RTVFormats[2] = positionFormat; // позиция
 	gbPsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
 	gbPsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	gbPsoDesc.DSVFormat = mDepthStencilFormat; // з-дефолтовый формат глубины (может быть D32_FLOAT)
@@ -1276,7 +1246,7 @@ void TexColumnsApp::BuildPSOs()
 
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC lightPsoDesc = {};
-	lightPsoDesc.InputLayout = { nullptr, 0 }; // если используем SV_VertexID в шейдере, входного layout не нужно
+	lightPsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() }; // если используем SV_VertexID в шейдере, входного layout не нужно
 	lightPsoDesc.pRootSignature = mLightingRootSignature.Get(); // наша новая корнев. сигнатура для освещения
 	lightPsoDesc.VS = { reinterpret_cast<BYTE*>(mShaders["lightingVS"]->GetBufferPointer()),
 						mShaders["lightingVS"]->GetBufferSize() };
@@ -1284,16 +1254,13 @@ void TexColumnsApp::BuildPSOs()
 						mShaders["lightingPS"]->GetBufferSize() };
 	lightPsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
 	lightPsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-	lightPsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-	lightPsoDesc.DepthStencilState.DepthEnable = FALSE; // отключим тест глубины для полного экрана
-	lightPsoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 	lightPsoDesc.SampleMask = UINT_MAX;
 	lightPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	lightPsoDesc.NumRenderTargets = 1;                   // выводим один финальный цвет
 	lightPsoDesc.RTVFormats[0] = mBackBufferFormat;      // формат экрана (обычно DXGI_FORMAT_R8G8B8A8_UNORM)
 	lightPsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
 	lightPsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
-	lightPsoDesc.DSVFormat = DXGI_FORMAT_UNKNOWN; // не используем буфер глубины
+	lightPsoDesc.DSVFormat = mDepthStencilFormat; // не используем буфер глубины
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&lightPsoDesc, IID_PPV_ARGS(&mPSOs["lighting"])));
 
@@ -1327,7 +1294,7 @@ void TexColumnsApp::BuildMaterials()
 	CreateMaterial("eye",0, TexOffsets["textures/eye"], TexOffsets["textures/eye_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("map",0, TexOffsets["textures/HeightMap2"], TexOffsets["textures/HeightMap2"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("map2",0, TexOffsets["textures/HeightMap"], TexOffsets["textures/HeightMap"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("bricks",0, TexOffsets["textures/bricks"], TexOffsets["textures/bricks"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	//CreateMaterial("bricks",0, TexOffsets["textures/bricks"], TexOffsets["textures/bricks"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("prikol1",0, TexOffsets["textures/prikol2"], TexOffsets["textures/prikol2"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 }
 void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation)
@@ -1360,8 +1327,8 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 
 void TexColumnsApp::BuildRenderItems()
 {
-	/*auto boxRitem = std::make_unique<RenderItem>();
-	boxRitem->Name = "box";
+	auto boxRitem = std::make_unique<RenderItem>();
+	boxRitem->Name = "box1";
 	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 1.0f, 3.0f));
 	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1,1,1));
 	boxRitem->ObjCBIndex = 0;
@@ -1371,9 +1338,9 @@ void TexColumnsApp::BuildRenderItems()
 	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["box"].IndexCount;
 	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
-	mAllRitems.push_back(std::move(boxRitem));*/
+	mAllRitems.push_back(std::move(boxRitem));
 
-	//RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
+	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
 	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 3, 0));
 	RenderCustomMesh("eyeL", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
 	RenderCustomMesh("eyeR", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
@@ -1389,6 +1356,209 @@ void TexColumnsApp::BuildRenderItems()
 		mOpaqueRitems.push_back(e.get());
 	}
 }
+
+
+
+void TexColumnsApp::Draw(const GameTimer& gt)
+{
+
+	auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
+
+	// Reuse the memory associated with command recording.
+	// We can only reset when the associated command lists have finished execution on the GPU.
+	ThrowIfFailed(cmdListAlloc->Reset());
+
+	// A command list can be reset after it has been added to the command queue via ExecuteCommandList.
+	// Reusing the command list reuses memory.
+	ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
+
+	mCommandList->RSSetViewports(1, &mScreenViewport);
+	mCommandList->RSSetScissorRects(1, &mScissorRect);
+
+	// Indicate a state transition on the resource usage.
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
+	// Clear the back buffer and depth buffer.
+	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
+	mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
+	// Specify the buffers we are going to render to.
+	mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
+
+	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
+	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+
+	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+
+	auto passCB = mCurrFrameResource->PassCB->Resource();
+	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
+
+
+	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+
+
+	// Indicate a state transition on the resource usage.
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+
+	// Done recording commands.
+	ThrowIfFailed(mCommandList->Close());
+
+	// Add the command list to the queue for execution.
+	ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
+	mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
+
+	// Swap the back and front buffers
+	ThrowIfFailed(mSwapChain->Present(1, 0));
+	mCurrBackBuffer = (mCurrBackBuffer + 1) % SwapChainBufferCount;
+
+	// Advance the fence value to mark commands up to this fence point.
+	mCurrFrameResource->Fence = ++mCurrentFence;
+
+	// Add an instruction to the command queue to set a new fence point. 
+	// Because we are on the GPU timeline, the new fence point won't be 
+	// set until the GPU finishes processing all the commands prior to this Signal().
+	mCommandQueue->Signal(mFence.Get(), mCurrentFence);
+}
+
+void TexColumnsApp::DeferredDraw(const GameTimer& gt)
+{
+	auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
+
+	// Reuse the memory associated with command recording.
+	// We can only reset when the associated command lists have finished execution on the GPU.
+	ThrowIfFailed(cmdListAlloc->Reset());
+
+	// A command list can be reset after it has been added to the command queue via ExecuteCommandList.
+	// Reusing the command list reuses memory.
+	ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["gbuffer"].Get()));
+
+	mCommandList->RSSetViewports(1, &mScreenViewport);
+	mCommandList->RSSetScissorRects(1, &mScissorRect);
+
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
+	// Обнуляем буферы G-Buffer
+	// Очищаем каждый G-Buffer и глубину
+	// Стало:
+	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHs[] = {
+	CD3DX12_CPU_DESCRIPTOR_HANDLE(
+		mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+		SwapChainBufferCount, // Начинаем после SwapChain
+		mRtvDescriptorSize
+	),
+	CD3DX12_CPU_DESCRIPTOR_HANDLE(
+		mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+		SwapChainBufferCount + 1, // Начинаем после SwapChain
+		mRtvDescriptorSize
+	),
+	CD3DX12_CPU_DESCRIPTOR_HANDLE(
+		mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+		SwapChainBufferCount + 2, // Начинаем после SwapChain
+		mRtvDescriptorSize
+	) };
+	mCommandList->OMSetRenderTargets(3, rtvHs, true, &DepthStencilView());
+
+	for (int i = 0; i < 3; ++i)
+		mCommandList->ClearRenderTargetView(rtvHs[i], Colors::White, 0, nullptr);
+
+	
+	ID3D12DescriptorHeap* heaps[] = { mSrvDescriptorHeap.Get() /*для текстур*/ };
+	mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+
+	auto passCB = mCurrFrameResource->PassCB->Resource();
+	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
+
+	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+
+
+	D3D12_RESOURCE_BARRIER barrier[3] = {
+	CD3DX12_RESOURCE_BARRIER::Transition(mGBufferAlbedo.Get(),
+		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+	CD3DX12_RESOURCE_BARRIER::Transition(mGBufferNormal.Get(),
+		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+	CD3DX12_RESOURCE_BARRIER::Transition(mGBufferPosition.Get(),
+		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+	};
+	mCommandList->ResourceBarrier(3, barrier);
+
+	// Освещение: полскриин
+	mCommandList->SetPipelineState(mPSOs["lighting"].Get());
+	// Indicate a state transition on the resource usage.
+
+	// Clear the back buffer and depth buffer.
+	// Specify the buffers we are going to render to.
+	mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
+
+	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
+	mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
+
+
+	mCommandList->SetGraphicsRootSignature(mLightingRootSignature.Get());
+	// Дескрипторная куча с G-Buffer SRV
+	mCommandList->SetDescriptorHeaps(1, mSrvDescriptorHeap.GetAddressOf());
+	// Устанавливаем в слот 0 таблицу дескрипторов G-Buffer
+
+	CD3DX12_GPU_DESCRIPTOR_HANDLE positionHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	positionHandle.Offset(mTextures.size() + 0, mCbvSrvDescriptorSize);
+	CD3DX12_GPU_DESCRIPTOR_HANDLE normalHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	normalHandle.Offset(mTextures.size() + 1, mCbvSrvDescriptorSize);
+	CD3DX12_GPU_DESCRIPTOR_HANDLE albedoHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	albedoHandle.Offset(mTextures.size() + 2, mCbvSrvDescriptorSize);
+	mCommandList->SetGraphicsRootDescriptorTable(0, positionHandle);
+	mCommandList->SetGraphicsRootDescriptorTable(1, normalHandle);
+	mCommandList->SetGraphicsRootDescriptorTable(2, albedoHandle);
+	// Устанавливаем константный буфер Pass (с камерами и светами)
+	mCommandList->SetGraphicsRootConstantBufferView(3, mCurrFrameResource->PassCB->Resource()->GetGPUVirtualAddress());
+	// Рисуем один треугольник
+	mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+
+	
+	mCommandList->DrawIndexedInstanced(mOpaqueRitems[0]->IndexCount, 1, mOpaqueRitems[0]->StartIndexLocation, mOpaqueRitems[0]->BaseVertexLocation, 0);
+
+
+	// После освещения:
+	D3D12_RESOURCE_BARRIER revertBarrier[3] = {
+		CD3DX12_RESOURCE_BARRIER::Transition(mGBufferAlbedo.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+		CD3DX12_RESOURCE_BARRIER::Transition(mGBufferNormal.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+		CD3DX12_RESOURCE_BARRIER::Transition(mGBufferPosition.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET)
+	};
+	mCommandList->ResourceBarrier(3, revertBarrier);
+
+
+	D3D12_RESOURCE_BARRIER presentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+		CurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+	mCommandList->ResourceBarrier(1, &presentBarrier);
+
+
+	// Done recording commands.
+	ThrowIfFailed(mCommandList->Close());
+
+	// Add the command list to the queue for execution.
+	ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
+	mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
+
+	// Swap the back and front buffers
+	ThrowIfFailed(mSwapChain->Present(1, 0));
+	mCurrBackBuffer = (mCurrBackBuffer + 1) % SwapChainBufferCount;
+
+	// Advance the fence value to mark commands up to this fence point.
+	mCurrFrameResource->Fence = ++mCurrentFence;
+
+	// Add an instruction to the command queue to set a new fence point. 
+	// Because we are on the GPU timeline, the new fence point won't be 
+	// set until the GPU finishes processing all the commands prior to this Signal().
+	mCommandQueue->Signal(mFence.Get(), mCurrentFence);
+
+}
+
+
+
 
 void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
 {
