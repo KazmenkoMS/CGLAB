@@ -19,10 +19,22 @@ using namespace DirectX::PackedVector;
 
 const int gNumFrameResources = 3;
 
+struct LodLevel
+{
+	MeshGeometry* Geo = nullptr; // Указатель на геометрию для этого LOD-уровня
+	// Submesh данные, если Geo общее, а LODы - это разные Submesh'ы внутри него
+	UINT IndexCount = 0;
+	UINT StartIndexLocation = 0;
+	int BaseVertexLocation = 0;
+	float SwitchDistance = 0.0f; // Расстояние, после которого используется этот LOD (или следующий, более низкий)
+	DirectX::BoundingBox Bounds; // Локальный BoundingBox для этого LOD-уровня
+};
 // Lightweight structure stores parameters to draw a shape.  This will
 // vary from app-to-app.
 struct RenderItem
 {
+	std::vector<LodLevel> LodLevels; // Массив уровней детализации
+	int CurrentLodIndex = 0;         // Индекс текущего активного LOD
 	RenderItem() = default;
     RenderItem(const RenderItem& rhs) = delete;
 
@@ -30,7 +42,7 @@ struct RenderItem
     // relative to the world space, which defines the position, orientation,
     // and scale of the object in the world.
     XMFLOAT4X4 World = MathHelper::Identity4x4();
-
+	DirectX::BoundingBox Bounds; 
 	XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
 
 	// Dirty flag indicating the object data has changed and we need to update the constant buffer.
@@ -54,6 +66,10 @@ struct RenderItem
     int BaseVertexLocation = 0;
 	std::string Name;
 };
+
+
+
+
 
 class TexColumnsApp : public D3DApp
 {
@@ -95,11 +111,13 @@ private:
     void BuildFrameResources();
 	void CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness);
     void BuildMaterials();
-	void RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation);
+	void RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation, int nLods);
+	void BuildMultiLODGeometry(std::string name,int nLODs, UINT& meshVertexOffset, UINT& meshIndexOffset, UINT& prevVertSize, UINT& prevIndSize, std::vector<Vertex>& vertices, std::vector<std::uint16_t>& indices, MeshGeometry* Geo);
 	void BuildCustomMeshGeometry(std::string name, UINT& meshVertexOffset, UINT& meshIndexOffset, UINT& prevVertSize, UINT& prevIndSize, std::vector<Vertex>& vertices, std::vector<std::uint16_t>& indices, MeshGeometry* Geo);
     void BuildRenderItems();
     void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
-
+	void UpdateVisibleItems(); // Метод для обновления видимости
+	void UpdateLODs(RenderItem* ri); 
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
 private:
@@ -126,7 +144,8 @@ private:
  
 	// List of all the render items.
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
-
+	// visible render items
+	std::vector<RenderItem*> mVisibleRitems;
 	// Render items divided by PSO.
 	std::vector<RenderItem*> mOpaqueRitems;
 
@@ -238,6 +257,7 @@ bool TexColumnsApp::Initialize()
 
     // Wait until initialization is complete.
     FlushCommandQueue();
+	std::cout << "1\n";
     return true;
 }
  
@@ -246,7 +266,9 @@ void TexColumnsApp::OnResize()
     D3DApp::OnResize();
 
     // The window resized, so update the aspect ratio and recompute the projection matrix.
-    XMMATRIX P = XMMatrixPerspectiveFovLH(0.4f*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+	XMMATRIX P;
+	cam.SetLens(0.5f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+	P = cam.GetProj();
     XMStoreFloat4x4(&mProj, P);
 }
 
@@ -308,7 +330,6 @@ void TexColumnsApp::Update(const GameTimer& gt)
 
 
 
-	UpdateCamera(gt);
 	for (auto& rItem : mAllRitems)
 	{
 		if (rItem->Name == "eyeL")
@@ -352,6 +373,11 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	UpdateObjectCBs(gt);
 	UpdateMaterialCBs(gt);
 	UpdateMainPassCB(gt);
+	UpdateCamera(gt);
+	UpdateVisibleItems();
+	for (auto rItem : mVisibleRitems) {
+		UpdateLODs(rItem);
+	}
 }
 
 void TexColumnsApp::Draw(const GameTimer& gt)
@@ -389,8 +415,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	auto passCB = mCurrFrameResource->PassCB->Resource();
 	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
 
-
-    DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+    DrawRenderItems(mCommandList.Get(), mVisibleRitems);
 
 
     // Indicate a state transition on the resource usage.
@@ -445,6 +470,7 @@ void TexColumnsApp::OnMouseMove(WPARAM btnState, int x, int y)
 	}
 	mLastMousePos.x = x;
 	mLastMousePos.y = y;
+
 }
 
  
@@ -519,6 +545,7 @@ void TexColumnsApp::UpdateCamera(const GameTimer& gt)
 	
 	XMMATRIX view = XMMatrixLookToLH(pos, target, up);
 	XMStoreFloat4x4(&mView, view);
+	cam.UpdateViewMatrix();
 }
 
 void TexColumnsApp::AnimateMaterials(const GameTimer& gt)
@@ -751,7 +778,6 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 
 	// Создаем инстанс импортера.
 	Assimp::Importer importer;
-
 	// Читаем файл с постпроцессингом: триангуляция, флип UV (если нужно) и генерация нормалей.
 	const aiScene* scene = importer.ReadFile("../../Common/" + name + ".obj",
 		aiProcess_Triangulate |
@@ -867,6 +893,12 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 		meshSubmesh.IndexCount = (UINT)mesh.Indices32.size();
 		meshSubmesh.StartIndexLocation = meshIndexOffset;
 		meshSubmesh.BaseVertexLocation = meshVertexOffset;
+
+		BoundingBox::CreateFromPoints(meshSubmesh.Bounds,
+			mesh.Vertices.size(),
+			&mesh.Vertices[0].Position,
+			sizeof(Vertex)
+		);
 		GeometryGenerator::MeshData m = mesh;
 		meshSubmeshes.push_back(std::make_pair(m,meshSubmesh));
 	}
@@ -889,6 +921,14 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 	///////
 	Geo->MultiDrawArgs[name] = meshSubmeshes;
 }
+void TexColumnsApp::BuildMultiLODGeometry(std::string name,int nLODs, UINT& meshVertexOffset, UINT& meshIndexOffset, UINT& prevVertSize, UINT& prevIndSize, std::vector<Vertex>& vertices, std::vector<std::uint16_t>& indices, MeshGeometry* Geo)
+{
+	for (int i = 0;i < nLODs;i++)
+	{
+		BuildCustomMeshGeometry(name+"_lod"+std::to_string(i), meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, Geo);
+	}
+}
+
 void TexColumnsApp::BuildShapeGeometry()
 {
     GeometryGenerator geoGen;
@@ -991,11 +1031,12 @@ void TexColumnsApp::BuildShapeGeometry()
 
 	auto geo = std::make_unique<MeshGeometry>();
 	geo->Name = "shapeGeo";
-	BuildCustomMeshGeometry("sponza", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
-	BuildCustomMeshGeometry("negr", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
-	BuildCustomMeshGeometry("left", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
-	BuildCustomMeshGeometry("right", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
-	BuildCustomMeshGeometry("plane2", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
+	BuildMultiLODGeometry("monkey", 5, meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
+	BuildMultiLODGeometry("sponza", 1, meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
+	BuildMultiLODGeometry("negr", 6, meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
+	BuildCustomMeshGeometry("left_lod0", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
+	BuildCustomMeshGeometry("right_lod0", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
+	//BuildCustomMeshGeometry("plane2", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
 	
 
 
@@ -1093,12 +1134,13 @@ void TexColumnsApp::BuildMaterials()
 	CreateMaterial("eye",0, TexOffsets["textures/eye"], TexOffsets["textures/eye_nm"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("map",0, TexOffsets["textures/HeightMap2"], TexOffsets["textures/HeightMap2"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("map2",0, TexOffsets["textures/HeightMap"], TexOffsets["textures/HeightMap"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("bricks",0, TexOffsets["textures/bricks"], TexOffsets["textures/bricks"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+//	CreateMaterial("bricks",0, TexOffsets["textures/bricks"], TexOffsets["textures/bricks"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("prikol1",0, TexOffsets["textures/prikol2"], TexOffsets["textures/prikol2"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 }
-void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation)
+void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation, int nLods)
 {
-	for (int i = 0;i < ObjectsMeshCount[meshname];i++)
+	
+	for (int i = 0;i < ObjectsMeshCount[meshname + "_lod" + std::to_string(0)];i++)
 	{
 		auto rItem = std::make_unique<RenderItem>();
 		std::string textureFile;
@@ -1108,19 +1150,31 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 		rItem->ObjCBIndex = mAllRitems.size();
 		rItem->Geo = mGeometries["shapeGeo"].get();
 		rItem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		std::string matname = rItem->Geo->MultiDrawArgs[meshname][i].first.matName;
+		std::string matname = rItem->Geo->MultiDrawArgs[meshname + "_lod" + std::to_string(0)][i].first.matName;
 		std::cout << " mat : " << matname << "\n";
 		std::cout << unique_name << " " << matname << "\n";
 		if (materialName != "") matname = materialName;
 		rItem->Mat = mMaterials[matname].get();
-		rItem->IndexCount = rItem->Geo->MultiDrawArgs[meshname][i].second.IndexCount;
-		rItem->StartIndexLocation = rItem->Geo->MultiDrawArgs[meshname][i].second.StartIndexLocation;
-		rItem->BaseVertexLocation = rItem->Geo->MultiDrawArgs[meshname][i].second.BaseVertexLocation;
+		for (int l = 0;l < nLods;l++)
+		{
+			LodLevel lod;
+			lod.Geo = mGeometries["shapeGeo"].get();
+			lod.IndexCount = rItem->Geo->MultiDrawArgs[meshname+"_lod"+std::to_string(l)][i].second.IndexCount;
+			lod.IndexCount = rItem->Geo->MultiDrawArgs[meshname + "_lod" + std::to_string(l)][i].second.IndexCount;
+			lod.StartIndexLocation = rItem->Geo->MultiDrawArgs[meshname + "_lod" + std::to_string(l)][i].second.StartIndexLocation;
+			lod.BaseVertexLocation = rItem->Geo->MultiDrawArgs[meshname + "_lod" + std::to_string(l)][i].second.BaseVertexLocation;
+			lod.Bounds = rItem->Geo->MultiDrawArgs[meshname + "_lod" + std::to_string(l)][i].second.Bounds;
+			lod.SwitchDistance = (l + 1) * 5;
+			rItem->LodLevels.push_back(lod);
+		}
+		rItem->CurrentLodIndex = 0; // Начинаем с самого детализированного
+
 		mAllRitems.push_back(std::move(rItem));
 		mOpaqueRitems.push_back(mAllRitems[mAllRitems.size() - 1].get());
 	}
 	BuildFrameResources();
 }
+
 
 
 
@@ -1139,21 +1193,17 @@ void TexColumnsApp::BuildRenderItems()
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
 	mAllRitems.push_back(std::move(boxRitem));*/
 
-	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
-	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 3, 0));
-	RenderCustomMesh("eyeL", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
-	RenderCustomMesh("eyeR", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixIdentity());
-	//RenderCustomMesh("plan", "plane2", "map", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,-10,0));
+	RenderCustomMesh("monkey", "monkey", "NiggaMat", XMMatrixScaling(2.0f, 2.0f, 2.0f), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(-3, 3, 0),5);
+
+
+
+	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0),1);
+	RenderCustomMesh("1", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(3.63, 3.9, 1.1),1);
+	RenderCustomMesh("2", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(3 - 0.63, 3.9, 1.1),1);
+	RenderCustomMesh("negr", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(3,3,0),6);
 	//RenderCustomMesh("plan", "plane2", "map2", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,10,0));
 	// All the render items are opaque.
-	for (auto& e : mAllRitems)
-	{
-		if (e->Name == "plan")
-		{
-			XMStoreFloat4x4(&e->TexTransform, XMMatrixScaling(1, 1, 1));
-		}
-		mOpaqueRitems.push_back(e.get());
-	}
+
 }
 
 void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
@@ -1168,8 +1218,10 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
     for(size_t i = 0; i < ritems.size(); ++i)
     {
         auto ri = ritems[i];
-        cmdList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
-        cmdList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
+		const LodLevel& activeLod = ri->LodLevels[ri->CurrentLodIndex];
+		if (ri->CurrentLodIndex < 0) continue;
+        cmdList->IASetVertexBuffers(0, 1, &activeLod.Geo->VertexBufferView());
+        cmdList->IASetIndexBuffer(&activeLod.Geo->IndexBufferView());
         cmdList->IASetPrimitiveTopology(ri->PrimitiveType);
 
 		CD3DX12_GPU_DESCRIPTOR_HANDLE diffuseHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
@@ -1190,8 +1242,52 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
         cmdList->SetGraphicsRootConstantBufferView(2, objCBAddress);
         cmdList->SetGraphicsRootConstantBufferView(4, matCBAddress);
 
-        cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
+        cmdList->DrawIndexedInstanced(activeLod.IndexCount, 1, activeLod.StartIndexLocation, activeLod.BaseVertexLocation, 0);
     }
+}
+
+void TexColumnsApp::UpdateVisibleItems() {
+	mVisibleRitems.clear();
+	
+	BoundingFrustum camFrustum = cam.GetFrustum();
+	
+	for (auto& ri : mAllRitems) {
+		const LodLevel& activeLod = ri->LodLevels[ri->CurrentLodIndex];
+		// Трансформируем BoundingBox в мировое пространство
+		BoundingBox transformedBox;
+		activeLod.Bounds.Transform(transformedBox, XMLoadFloat4x4(&ri->World));
+
+		if (camFrustum.Contains(transformedBox) != DISJOINT) {
+			mVisibleRitems.push_back(ri.get());
+		}
+	}
+	std::cout << "objects visible: " << mVisibleRitems.size() << "\n";
+}
+
+void TexColumnsApp::UpdateLODs(RenderItem* ri)
+{
+	BoundingBox worldSpaceObjectBounds;
+	ri->Bounds.Transform(worldSpaceObjectBounds, XMLoadFloat4x4(&ri->World));
+	XMVECTOR objectCenterWorld = XMLoadFloat3(&worldSpaceObjectBounds.Center);
+
+	XMVECTOR cameraPos = cam.GetPosition();
+	float distanceToCamera = XMVectorGetX(XMVector3Length(XMVectorSubtract(objectCenterWorld, cameraPos)));
+
+	int selectedLod = 0;
+	for (size_t i = 0; i < ri->LodLevels.size(); ++i)
+	{
+		if (distanceToCamera < ri->LodLevels[i].SwitchDistance)
+		{
+			selectedLod = i;
+			break;
+		}
+		// Если это последний LOD, и мы все еще дальше его SwitchDistance (которая должна быть очень большой)
+		// или если SwitchDistance для последнего LOD - это маркер "до бесконечности"
+		if (i == ri->LodLevels.size() - 1) {
+			selectedLod = i;
+		}
+	}
+	ri->CurrentLodIndex = selectedLod;
 }
 
 std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> TexColumnsApp::GetStaticSamplers()

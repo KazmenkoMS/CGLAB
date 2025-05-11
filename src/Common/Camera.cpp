@@ -2,13 +2,13 @@
 // Camera.h by Frank Luna (C) 2011 All Rights Reserved.
 //***************************************************************************************
 
+#include <iostream>
 #include "Camera.h"
-
 using namespace DirectX;
 
 Camera::Camera()
 {
-	SetLens(0.25f*MathHelper::Pi, 1.0f, 1.0f, 1000.0f);
+	SetLens(0.5f*MathHelper::Pi, 1.0f, 1.0f, 500.0f);
 	DirectX::XMStoreFloat4(&orientation,DirectX::XMQuaternionIdentity());
 }
 
@@ -277,7 +277,7 @@ void Camera::YawPitch(float yawDelta, float pitchDelta)
 	XMStoreFloat3(&mRight, newRight);
 	XMVECTOR newUp = XMVector3Normalize(XMVector3Cross(newForward, newRight));
 	XMStoreFloat3(&mUp, newUp);
-
+	mViewDirty = true;
 	// 6. Обновляем матрицу вида.
 	UpdateViewMatrix();
 }
@@ -361,6 +361,18 @@ void Camera::UpdateViewMatrix()
 
 		mViewDirty = false;
 	}
+	UpdateFrustum();
 }
 
+DirectX::BoundingFrustum Camera::GetFrustum() const { return mFrustum; }
+
+void Camera::UpdateFrustum() {
+	XMMATRIX P = GetProj();
+	BoundingFrustum::CreateFromMatrix(mFrustum, P);
+
+	XMMATRIX view = GetView(); // или GetView() если оно возвращает актуальную матрицу
+	XMVECTOR det; // детерминант
+	XMMATRIX invView = XMMatrixInverse(&det, view);
+	mFrustum.Transform(mFrustum, invView);
+}
 
