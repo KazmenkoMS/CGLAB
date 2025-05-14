@@ -1374,18 +1374,18 @@ void TexColumnsApp::UpdateVisibleItems() {
 	
 	BoundingFrustum camFrustum = cam.GetFrustum();
 	
-	for (auto& ri : mAllRitems) {
-		const LodLevel& activeLod = ri->LodLevels[ri->CurrentLodIndex];
-		// Трансформируем BoundingBox в мировое пространство
-		BoundingBox transformedBox;
-		activeLod.Bounds.Transform(transformedBox, XMLoadFloat4x4(&ri->World));
+	//for (auto& ri : mAllRitems) {
+	//	const LodLevel& activeLod = ri->LodLevels[ri->CurrentLodIndex];
+	//	// Трансформируем BoundingBox в мировое пространство
+	//	BoundingBox transformedBox;
+	//	activeLod.Bounds.Transform(transformedBox, XMLoadFloat4x4(&ri->World));
 
-		if (camFrustum.Contains(transformedBox) != DISJOINT) {
-			mVisibleRitems.push_back(ri.get());
-		}
-	}
+	//	if (camFrustum.Contains(transformedBox) != DISJOINT) {
+	//		mVisibleRitems.push_back(ri.get());
+	//	}
+	//}
 
-	//CollectVisibleRenderItems(mOctreeRoot.get(), camFrustum, mVisibleRitems);
+	CollectVisibleRenderItems(mOctreeRoot.get(), camFrustum, mVisibleRitems);
 
 
 	std::cout << "objects visible: " << mVisibleRitems.size() << "\n";
