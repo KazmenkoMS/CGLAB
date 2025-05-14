@@ -19,6 +19,8 @@ using namespace DirectX::PackedVector;
 
 const int gNumFrameResources = 3;
 
+
+
 struct LodLevel
 {
 	MeshGeometry* Geo = nullptr; // ”казатель на геометрию дл€ этого LOD-уровн€
@@ -68,6 +70,80 @@ struct RenderItem
 };
 
 
+struct OctreeNode
+{
+	BoundingBox Bounds; // √раницы этой €чейки
+	std::vector<RenderItem*> Objects; // ќбъекты внутри этой €чейки
+	std::unique_ptr<OctreeNode> Children[8]; // ƒети (8 штук)
+	bool IsLeaf = true; // Ћист или нет
+
+	OctreeNode(const BoundingBox& bounds) : Bounds(bounds) {}
+};
+
+std::unique_ptr<OctreeNode> BuildOctree(
+	const BoundingBox& bounds,
+	const std::vector<RenderItem*>& objects,
+	int currentDepth,
+	int maxDepth)
+{
+	auto node = std::make_unique<OctreeNode>(bounds);
+
+	if (currentDepth >= maxDepth) {
+		node->Objects = objects;
+		return node;
+	}
+
+	// ¬ычисл€ем центр бокса
+	XMFLOAT3 min = bounds.Center;
+	min.x -= bounds.Extents.x;
+	min.y -= bounds.Extents.y;
+	min.z -= bounds.Extents.z;
+
+	XMFLOAT3 max = bounds.Center;
+	max.x += bounds.Extents.x;
+	max.y += bounds.Extents.y;
+	max.z += bounds.Extents.z;
+
+	XMFLOAT3 center = bounds.Center;
+	XMFLOAT3 e = bounds.Extents;
+
+	// 8 новых AABB Ч каждый в четверти пространства
+	BoundingBox childBoxes[8];
+	int i = 0;
+	for (int dx = 0; dx <= 1; dx++) {
+		for (int dy = 0; dy <= 1; dy++) {
+			for (int dz = 0; dz <= 1; dz++) {
+				XMFLOAT3 childCenter = {
+					min.x + e.x * (0.5f + dx),
+					min.y + e.y * (0.5f + dy),
+					min.z + e.z * (0.5f + dz)
+				};
+				BoundingBox child;
+				child.Center = childCenter;
+				child.Extents = { e.x * 0.5f, e.y * 0.5f, e.z * 0.5f };
+				childBoxes[i++] = child;
+			}
+		}
+	}
+
+	// –азбрасываем объекты по дет€м
+	for (int i = 0; i < 8; i++) {
+		std::vector<RenderItem*> childObjects;
+		for (auto* obj : objects) {
+			BoundingBox transformedBounds;
+			obj->Bounds.Transform(transformedBounds, XMLoadFloat4x4(&obj->World));
+			if (childBoxes[i].Intersects(transformedBounds)) {
+				childObjects.push_back(obj);
+			}
+		}
+
+		if (!childObjects.empty()) {
+			node->Children[i] = BuildOctree(childBoxes[i], childObjects, currentDepth + 1, maxDepth);
+			node->IsLeaf = false;
+		}
+	}
+	return node;
+}
 
 
 
@@ -100,7 +176,7 @@ private:
 	void UpdateObjectCBs(const GameTimer& gt);
 	void UpdateMaterialCBs(const GameTimer& gt);
 	void UpdateMainPassCB(const GameTimer& gt);
-	
+	void BuildOctreeTree();
 	void LoadAllTextures();
 	void LoadTexture(const std::string& name);
     void BuildRootSignature();
@@ -133,7 +209,7 @@ private:
     ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
 
 	ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap = nullptr;
-
+	std::unique_ptr<OctreeNode> mOctreeRoot;
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
 	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
 	std::unordered_map<std::string, std::unique_ptr<Texture>> mTextures;
@@ -188,6 +264,48 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
 TexColumnsApp::TexColumnsApp(HINSTANCE hInstance)
     : D3DApp(hInstance)
 {
+}
+
+void CollectVisibleRenderItems(
+	const OctreeNode* node,
+	const BoundingFrustum& frustum,
+	std::vector<RenderItem*>& visibleItems)
+{
+	if (!node) return;
+
+	if (frustum.Contains(node->Bounds) == DISJOINT) {
+		// ”зел полностью вне фруструма Ч пропускаем
+		return;
+	}
+
+	if (node->IsLeaf) {
+		// Ћист Ч просто добавл€ем все объекты
+		for (RenderItem* ri : node->Objects) {
+			visibleItems.push_back(ri);
+		}
+	}
+	else {
+		// –екурсивно обходим всех детей
+		for (const auto& child : node->Children) {
+			if (child) {
+				CollectVisibleRenderItems(child.get(), frustum, visibleItems);
+			}
+		}
+	}
+}
+
+void TexColumnsApp::BuildOctreeTree() {
+	BoundingBox sceneBounds;
+	// «адать руками или вычислить AABB всей сцены
+	sceneBounds.Center = XMFLOAT3(600, 10, 600); // примерно по сцене
+	sceneBounds.Extents = XMFLOAT3(600, 100, 600);
+
+	std::vector<RenderItem*> allItems;
+	for (auto& ri : mAllRitems) {
+		allItems.push_back(ri.get());
+	}
+
+	mOctreeRoot = BuildOctree(sceneBounds, allItems, 0, 5);
 }
 
 TexColumnsApp::~TexColumnsApp()
@@ -249,7 +367,7 @@ bool TexColumnsApp::Initialize()
     BuildPSOs();
     BuildRenderItems();
     BuildFrameResources();
-
+	BuildOctreeTree();
     // Execute the initialization commands.
     ThrowIfFailed(mCommandList->Close());
     ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
@@ -1151,8 +1269,6 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 		rItem->Geo = mGeometries["shapeGeo"].get();
 		rItem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		std::string matname = rItem->Geo->MultiDrawArgs[meshname + "_lod" + std::to_string(0)][i].first.matName;
-		std::cout << " mat : " << matname << "\n";
-		std::cout << unique_name << " " << matname << "\n";
 		if (materialName != "") matname = materialName;
 		rItem->Mat = mMaterials[matname].get();
 		for (int l = 0;l < nLods;l++)
@@ -1172,7 +1288,6 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 		mAllRitems.push_back(std::move(rItem));
 		mOpaqueRitems.push_back(mAllRitems[mAllRitems.size() - 1].get());
 	}
-	BuildFrameResources();
 }
 
 
@@ -1193,14 +1308,22 @@ void TexColumnsApp::BuildRenderItems()
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
 	mAllRitems.push_back(std::move(boxRitem));*/
 
-	RenderCustomMesh("monkey", "monkey", "NiggaMat", XMMatrixScaling(2.0f, 2.0f, 2.0f), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(-3, 3, 0),5);
+	//RenderCustomMesh("monkey", "monkey", "NiggaMat", XMMatrixScaling(2.0f, 2.0f, 2.0f), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(-3, 3, 0),5);
 
 
 
-	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0),1);
-	RenderCustomMesh("1", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(3.63, 3.9, 1.1),1);
-	RenderCustomMesh("2", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(3 - 0.63, 3.9, 1.1),1);
-	RenderCustomMesh("negr", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(3,3,0),6);
+	//RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0),1);
+	//RenderCustomMesh("1", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(3.63, 3.9, 1.1),1);
+	//RenderCustomMesh("2", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(3 - 0.63, 3.9, 1.1),1);
+	for (int i = 0;i < 200;i++)
+	{
+		for (int j = 0;j < 200;j++)
+		{
+			RenderCustomMesh("negr", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(i*3,3,j*3),6);
+		}
+	}
+	BuildFrameResources();
+
 	//RenderCustomMesh("plan", "plane2", "map2", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(0,10,0));
 	// All the render items are opaque.
 
@@ -1261,6 +1384,10 @@ void TexColumnsApp::UpdateVisibleItems() {
 			mVisibleRitems.push_back(ri.get());
 		}
 	}
+
+	//CollectVisibleRenderItems(mOctreeRoot.get(), camFrustum, mVisibleRitems);
+
+
 	std::cout << "objects visible: " << mVisibleRitems.size() << "\n";
 }
 
