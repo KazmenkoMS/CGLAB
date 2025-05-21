@@ -223,9 +223,9 @@ struct Light
     DirectX::XMFLOAT3 Position = { 0.0f, 0.0f, 0.0f };  // point/spot light only
     float SpotPower = 64.0f;                            // spot light only
     int type = 0;
-    int type1;
-    int type2;
-    int type3;
+    DirectX::XMFLOAT4X4 gWorld;
+    SubmeshGeometry ShapeGeo;
+    int LightCBIndex;
 };
 
 #define MaxLights 16

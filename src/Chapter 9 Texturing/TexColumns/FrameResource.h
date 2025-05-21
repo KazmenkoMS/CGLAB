@@ -37,6 +37,11 @@ struct PassConstants
     Light Lights[MaxLights];
 };
 
+struct LightConstants
+{
+    DirectX::XMFLOAT4X4 gLightWorld;
+    Light light;
+};
 struct Vertex
 {
     DirectX::XMFLOAT3 Pos;
@@ -68,6 +73,7 @@ public:
     std::unique_ptr<UploadBuffer<PassConstants>> PassCB = nullptr;
     std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
     std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
+    std::unique_ptr<UploadBuffer<LightConstants>> LightCB = nullptr;
 
     // Fence value to mark commands up to this fence point.  This lets us
     // check if these frame resources are still in use by the GPU.

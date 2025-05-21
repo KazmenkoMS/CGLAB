@@ -18,7 +18,6 @@ struct Light
     int type1;
     int type2;
     int type3;
-    
 };
 
 struct Material

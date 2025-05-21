@@ -82,6 +82,7 @@ private:
 	void UpdateCamera(const GameTimer& gt);
 	void AnimateMaterials(const GameTimer& gt);
 	void UpdateObjectCBs(const GameTimer& gt);
+	void UpdateLightCBs(const GameTimer& gt);
 	void UpdateMaterialCBs(const GameTimer& gt);
 	void UpdateMainPassCB(const GameTimer& gt);
 	void CreateGBuffer() override;
@@ -89,6 +90,7 @@ private:
 	void LoadTexture(const std::string& name);
     void BuildRootSignature();
     void BuildLightingRootSignature();
+	void BuildLights();
 	void BuildDescriptorHeaps();
     void BuildShadersAndInputLayout();
     void BuildShapeGeometry();
@@ -102,6 +104,7 @@ private:
     void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
 
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
+	void CreatePointLight(XMFLOAT3 pos, XMFLOAT3 strength, float faloff_start, float faloff_end);
 
 private:
 	std::unordered_map<std::string, unsigned int>ObjectsMeshCount;
@@ -128,7 +131,7 @@ private:
  
 	// List of all the render items.
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
-
+	std::vector<Light>mLights;
 	// Render items divided by PSO.
 	std::vector<RenderItem*> mOpaqueRitems;
 
@@ -252,11 +255,11 @@ bool TexColumnsApp::Initialize()
 	LoadAllTextures();
     BuildRootSignature();
     BuildLightingRootSignature();
-	CreateGBuffer();
 	BuildDescriptorHeaps();
     BuildShapeGeometry();
     BuildShadersAndInputLayout();
 	BuildMaterials();
+	BuildLights();
     BuildPSOs();
     BuildRenderItems();
     BuildFrameResources();
@@ -274,7 +277,8 @@ bool TexColumnsApp::Initialize()
 void TexColumnsApp::OnResize()
 {
     D3DApp::OnResize();
-
+	CreateGBuffer();
+	BuildDescriptorHeaps();
     // The window resized, so update the aspect ratio and recompute the projection matrix.
     XMMATRIX P = XMMatrixPerspectiveFovLH(0.4f*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
     XMStoreFloat4x4(&mProj, P);
@@ -383,6 +387,7 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	AnimateMaterials(gt);
 	UpdateObjectCBs(gt);
 	UpdateMaterialCBs(gt);
+	UpdateLightCBs(gt);
 	UpdateMainPassCB(gt);
 }
 
@@ -524,6 +529,21 @@ void TexColumnsApp::UpdateObjectCBs(const GameTimer& gt)
 	}
 }
 
+void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
+{
+	auto currLightCB = mCurrFrameResource->LightCB.get();
+	for (auto& l : mLights)
+	{
+
+		// Only update the cbuffer data if the constants have changed.  
+		// This needs to be tracked per frame resource.
+		LightConstants lConst;
+		lConst.light = l;
+		lConst.gLightWorld = l.gWorld;
+		currLightCB->CopyData(l.LightCBIndex, lConst);
+	}
+}
+
 void TexColumnsApp::UpdateMaterialCBs(const GameTimer& gt)
 {
 	auto currMaterialCB = mCurrFrameResource->MaterialCB.get();
@@ -593,7 +613,9 @@ void TexColumnsApp::CreateGBuffer()
 	const DXGI_FORMAT positionFormat = DXGI_FORMAT_R32G32B32A32_FLOAT;
 	const DXGI_FORMAT normalFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	const DXGI_FORMAT albedoFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+	FlushCommandQueue();
 
+	ThrowIfFailed(mCommandList->Reset(mDirectCmdListAlloc.Get(), nullptr));
 	// Описание ресурса
 	D3D12_RESOURCE_DESC texDesc = {};
 	texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -607,6 +629,9 @@ void TexColumnsApp::CreateGBuffer()
 	texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 	texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET ;
 
+	mGBufferPosition.Reset();
+	mGBufferNormal.Reset();
+	mGBufferAlbedo.Reset();
 	// Создание ресурсов --------------------------------------------------------
 	// Position
 	texDesc.Format = positionFormat;
@@ -665,21 +690,15 @@ void TexColumnsApp::CreateGBuffer()
 	md3dDevice->CreateRenderTargetView(mGBufferPosition.Get(), &rtvDesc, rtvHandle);
 	mGBufferRTVs[2] = rtvHandle;
 
-	// Создание SRV -------------------------------------------------------------
-	// В вашем коде SRV создаются в BuildDescriptorHeaps(), поэтому добавим их туда.
-	// Модифицируем BuildDescriptorHeaps():
-	D3D12_DESCRIPTOR_HEAP_DESC GsrvHeapDesc = {};
-	GsrvHeapDesc.NumDescriptors = 3;
-	GsrvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-	GsrvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&GsrvHeapDesc, IID_PPV_ARGS(&mGBufferSrvHeap)));
 
+	// Execute the resize commands.
+	ThrowIfFailed(mCommandList->Close());
+	ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
+	mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
 
-	
+	// Wait until resize is complete.
+	FlushCommandQueue();
 
-	//mGBufferSRVs[0] = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvHandle);
-
-	//mGBufferSRVs[2] = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvHandle);
 }
 
 
@@ -768,11 +787,13 @@ void TexColumnsApp::BuildLightingRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE gAlbedo;
 	gAlbedo.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2); // t0..t2
 
-	CD3DX12_ROOT_PARAMETER rootParams[4];
+	CD3DX12_ROOT_PARAMETER rootParams[6];
 	rootParams[0].InitAsDescriptorTable(1, &gPosition, D3D12_SHADER_VISIBILITY_ALL);
 	rootParams[1].InitAsDescriptorTable(1, &gNormal, D3D12_SHADER_VISIBILITY_ALL);
 	rootParams[2].InitAsDescriptorTable(1, &gAlbedo, D3D12_SHADER_VISIBILITY_ALL);
-	rootParams[3].InitAsConstantBufferView(0); // b1 - PassCB (камеры и источники света)
+	rootParams[3].InitAsConstantBufferView(0); // b0 - PassCB (камеры и источники света)
+	rootParams[4].InitAsConstantBufferView(1); // b1
+	rootParams[5].InitAsConstantBufferView(2); // b2
 
 	auto staticSamplers = GetStaticSamplers();
 
@@ -798,6 +819,51 @@ void TexColumnsApp::BuildLightingRootSignature()
 		serializedRootSig->GetBufferPointer(),
 		serializedRootSig->GetBufferSize(),
 		IID_PPV_ARGS(mLightingRootSignature.GetAddressOf())));
+}
+
+void TexColumnsApp::CreatePointLight(XMFLOAT3 pos, XMFLOAT3 strength, float faloff_start, float faloff_end)
+{
+	Light light;
+	light.LightCBIndex = mLights.size();
+
+	light.Position = pos;
+	light.Strength = strength;
+	light.FalloffStart = faloff_start;
+	light.FalloffEnd = faloff_end;
+	light.type = 1;
+	light.ShapeGeo = mGeometries["shapeGeo"]->DrawArgs["sphere"];
+	auto& world = XMMatrixScaling(faloff_end * 2, faloff_end * 2, faloff_end * 2) * XMMatrixTranslation(pos.x, pos.y, pos.z);
+	XMStoreFloat4x4(&light.gWorld, XMMatrixTranspose(world));
+	mLights.push_back(light);
+}
+void TexColumnsApp::BuildLights()
+{
+	
+
+
+	CreatePointLight({ -3,3,0 }, { 4,0,0 }, 1, 5);
+	CreatePointLight({ 3,3,0 }, { 0,0,4 }, 1, 5);
+	CreatePointLight({ 0,3,6 }, { 0,4,0 }, 1, 5);
+
+	Light ambient;
+	ambient.LightCBIndex = mLights.size();
+
+	ambient.Position = { 3.0f, 0.0f, 3.0f };
+	ambient.Strength = { 0.1,0,0 }; // need only x
+	ambient.type = 0;
+	ambient.ShapeGeo = mGeometries["shapeGeo"]->DrawArgs["sphere"];
+	XMStoreFloat4x4(&ambient.gWorld, XMMatrixTranspose(XMMatrixTranslation(0, 0, 0) * XMMatrixScaling(1000, 1000, 1000)));
+	mLights.push_back(ambient);
+	Light light4;
+	light4.LightCBIndex = mLights.size();
+
+	light4.Direction = { -0.5, -1, 0 };
+	light4.Strength = { 0.5,0.2,0 };
+	light4.type = 2;
+	light4.ShapeGeo = mGeometries["shapeGeo"]->DrawArgs["sphere"];
+	auto& world = XMMatrixScaling(1000,1000,1000);
+	XMStoreFloat4x4(&light4.gWorld, XMMatrixTranspose(world));
+	mLights.push_back(light4);
 }
 
 void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness)
@@ -1253,7 +1319,28 @@ void TexColumnsApp::BuildPSOs()
 	lightPsoDesc.PS = { reinterpret_cast<BYTE*>(mShaders["lightingPS"]->GetBufferPointer()),
 						mShaders["lightingPS"]->GetBufferSize() };
 	lightPsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	lightPsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	lightPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
+
+	D3D12_RENDER_TARGET_BLEND_DESC rtBlendDesc = {};
+	rtBlendDesc.BlendEnable = TRUE;                         // включаем смешивание
+	rtBlendDesc.LogicOpEnable = FALSE;
+	rtBlendDesc.SrcBlend = D3D12_BLEND_ONE;              // src * 1
+	rtBlendDesc.DestBlend = D3D12_BLEND_ONE;              // dest * 1
+	rtBlendDesc.BlendOp = D3D12_BLEND_OP_ADD;           // сложение
+	rtBlendDesc.SrcBlendAlpha = D3D12_BLEND_ONE;
+	rtBlendDesc.DestBlendAlpha = D3D12_BLEND_ZERO;             // альфа сохраняем из src
+	rtBlendDesc.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	rtBlendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL; // RGB + A
+
+	D3D12_BLEND_DESC blendDesc = {};
+	blendDesc.AlphaToCoverageEnable = FALSE;
+	blendDesc.IndependentBlendEnable = FALSE;
+	blendDesc.RenderTarget[0] = rtBlendDesc;
+
+	lightPsoDesc.BlendState = blendDesc;
+
+
+
 	lightPsoDesc.SampleMask = UINT_MAX;
 	lightPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	lightPsoDesc.NumRenderTargets = 1;                   // выводим один финальный цвет
@@ -1327,7 +1414,7 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 
 void TexColumnsApp::BuildRenderItems()
 {
-	auto boxRitem = std::make_unique<RenderItem>();
+	/*auto boxRitem = std::make_unique<RenderItem>();
 	boxRitem->Name = "box1";
 	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 1.0f, 3.0f));
 	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1,1,1));
@@ -1338,7 +1425,7 @@ void TexColumnsApp::BuildRenderItems()
 	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["box"].IndexCount;
 	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
-	mAllRitems.push_back(std::move(boxRitem));
+	mAllRitems.push_back(std::move(boxRitem));*/
 
 	RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
 	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 3, 0));
@@ -1462,7 +1549,7 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	mCommandList->OMSetRenderTargets(3, rtvHs, true, &DepthStencilView());
 
 	for (int i = 0; i < 3; ++i)
-		mCommandList->ClearRenderTargetView(rtvHs[i], Colors::White, 0, nullptr);
+		mCommandList->ClearRenderTargetView(rtvHs[i], Colors::Black, 0, nullptr);
 
 	
 	ID3D12DescriptorHeap* heaps[] = { mSrvDescriptorHeap.Get() /*для текстур*/ };
@@ -1493,7 +1580,7 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	// Specify the buffers we are going to render to.
 	mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
 
-	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
+	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::Black, 0, nullptr);
 	mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
 
@@ -1519,7 +1606,26 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 
 
 	
-	mCommandList->DrawIndexedInstanced(mOpaqueRitems[0]->IndexCount, 1, mOpaqueRitems[0]->StartIndexLocation, mOpaqueRitems[0]->BaseVertexLocation, 0);
+	
+	UINT lightCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(LightConstants));
+	// draw light
+	for (auto& light : mLights)
+	{
+		auto lightCB = mCurrFrameResource->LightCB->Resource();
+		mCommandList->IASetVertexBuffers(0, 1, &mGeometries["shapeGeo"]->VertexBufferView());
+		mCommandList->IASetIndexBuffer(&mGeometries["shapeGeo"]->IndexBufferView());
+
+		D3D12_GPU_VIRTUAL_ADDRESS lightCBAddress = lightCB->GetGPUVirtualAddress() + light.LightCBIndex * lightCBByteSize;
+		mCommandList->SetGraphicsRootConstantBufferView(5, lightCBAddress);
+
+		mCommandList->DrawIndexedInstanced(light.ShapeGeo.IndexCount, 1, light.ShapeGeo.StartIndexLocation, light.ShapeGeo.BaseVertexLocation, 0);
+	}
+	
+
+
+
+
+
 
 
 	// После освещения:

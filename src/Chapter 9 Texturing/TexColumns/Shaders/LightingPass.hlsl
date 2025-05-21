@@ -48,7 +48,18 @@ cbuffer cbPass : register(b0)
     // are spot lights for a maximum of MaxLights per object.
     Light gLights[MaxLights];
 };
+cbuffer cbPerObject : register(b1)
+{
+    float4x4 gWorld;
+    float4x4 gInvWorld;
+    float4x4 gTexTransform;
+};
 
+cbuffer cbLight : register(b2)
+{
+    float4x4 lightWorld;
+    Light light;
+}
 // Вершинный шейдер для полноэкранного треугольника
 struct VSOut
 {
@@ -56,32 +67,63 @@ struct VSOut
     float2 TexC : TEXCOORD;
 };
 
-VSOut VS(uint vid : SV_VertexID)
+//VSOut VS(uint vid : SV_VertexID)
+//{
+//    VSOut output;
+    
+//    // Координаты вершин полноэкранного треугольника
+//    float2 positions[3] =
+//    {
+//        float2(-1, -1),
+//        float2(3, -1),
+//        float2(-1, 3)
+//    };
+    
+//    output.PosH = float4(positions[vid], 0, 1);
+//    output.TexC = positions[vid] * float2(0.5, -0.5) + 0.5;
+    
+//    return output;
+//}
+struct VertexIn
 {
-    VSOut output;
+    float3 PosL : POSITION;
+    float3 NormalL : NORMAL;
+    float2 TexC : TEXCOORD;
+    float3 Tan : TANGENT;
+};
+
+struct VertexOut
+{
+    float4 PosH : SV_POSITION;
+    float3 PosW : POSITION;
+    float3 NormalW : NORMAL;
+    float2 TexC : TEXCOORD;
+    float3 Tan : TANGENT;
+};
+VertexOut VS(VertexIn vin)
+{
+    VertexOut vout = (VertexOut) 0.0f;
+    // Transform to world space.
+    float4 posW = mul(float4(vin.PosL, 1.0f), lightWorld);
+    vout.PosW = posW;
+
+    vout.PosH = mul(posW, gViewProj);
     
-    // Координаты вершин полноэкранного треугольника
-    float2 positions[3] =
-    {
-        float2(-1, -1),
-        float2(3, -1),
-        float2(-1, 3)
-    };
+   
     
-    output.PosH = float4(positions[vid], 0, 1);
-    output.TexC = positions[vid] * float2(0.5, -0.5) + 0.5;
+ 
     
-    return output;
+    return vout;
 }
 
 // Пиксельный шейдер освещения
-float4 PS(VSOut pin) : SV_TARGET
+float4 PS(VertexOut pin) : SV_TARGET
 {
+    int2 pix = int2(pin.PosH.xy);
     // Вычитываем G-Buffer
-    float4 albedo = gAlbedoMap.Sample(gsamAnisotropicWrap, pin.TexC);
-    float3 normalW = normalize(gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb);
-   
-    float3 posW = gPositionMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
+    float4 albedo = gAlbedoMap.Load(int3(pix, 0));
+    float3 normalW = normalize(gNormalMap.Load(int3(pix, 0)).xyz);
+    float3 posW = gPositionMap.Load(int3(pix, 0)).xyz;
 
     float3 toEyeW = normalize(gEyePosW - posW);
 
@@ -90,12 +132,26 @@ float4 PS(VSOut pin) : SV_TARGET
 
     Material mat =
     {
-       albedo, float3(0.05, 0.05, 0.05), 0.7
+        albedo, float3(0.05, 0.05, 0.05), 0.7
     };
     float3 shadowFactor = 1.0f;
-    float4 directLight = ComputeLighting(gLights, mat, posW,
-        normalW, toEyeW, shadowFactor)/3;
-    float4 litColor = directLight;
+    float3 lighting;
+    switch (light.type)
+    {
+        case 0:
+            lighting = light.Strength.x * albedo;
+            break;
+        case 1:
+            lighting = ComputePointLight(light, mat, posW,
+        normalW, toEyeW);
+            break;
+        case 2:
+            lighting = ComputeDirectionalLight(light, mat, normalW, toEyeW);
+            break;
+
+    }
+  
+    float4 litColor = float4(lighting, 1);
     // Common convention to take alpha from diffuse albedo.
     litColor.a = albedo.a;
 
