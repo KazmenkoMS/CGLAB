@@ -1231,7 +1231,7 @@ void TexColumnsApp::BuildShapeGeometry()
     GeometryGenerator geoGen;
 	GeometryGenerator::MeshData box = geoGen.CreateBox(1.0f, 1.0f, 1.0f, 0);
 	GeometryGenerator::MeshData grid = geoGen.CreateGrid(20.0f, 30.0f, 60, 40);
-	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 5, 5);
+	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 15, 15);
 	GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.25f, 0.00f, 1.0f, 20, 20);
 
 	//
@@ -1769,7 +1769,7 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 		D3D12_GPU_VIRTUAL_ADDRESS lightCBAddress = lightCB->GetGPUVirtualAddress() + light.LightCBIndex * lightCBByteSize;
 		mCommandList->SetGraphicsRootConstantBufferView(5, lightCBAddress);
 
-		if (light.type == 0 || light.type == 2 || light.type == 3)
+		if (light.type == 0 || light.type == 2 )
 		{
 			mCommandList->SetPipelineState(mPSOs["lightingQUAD"].Get());
 			mCommandList->DrawInstanced(3, 1, 0, 0);
