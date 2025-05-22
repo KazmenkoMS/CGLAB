@@ -17,7 +17,8 @@ struct Light
     int type;
     int type1;
     int type2;
-    int type3;
+    int isDebugOn;
+    float4x4 gWorld;
 };
 
 struct Material

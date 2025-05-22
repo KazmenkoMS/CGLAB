@@ -57,7 +57,6 @@ cbuffer cbPerObject : register(b1)
 
 cbuffer cbLight : register(b2)
 {
-    float4x4 lightWorld;
     Light light;
 }
 // Вершинный шейдер для полноэкранного треугольника
@@ -67,23 +66,23 @@ struct VSOut
     float2 TexC : TEXCOORD;
 };
 
-//VSOut VS(uint vid : SV_VertexID)
-//{
-//    VSOut output;
+VSOut VS_QUAD(uint vid : SV_VertexID)
+{
+    VSOut output;
     
-//    // Координаты вершин полноэкранного треугольника
-//    float2 positions[3] =
-//    {
-//        float2(-1, -1),
-//        float2(3, -1),
-//        float2(-1, 3)
-//    };
+    // Координаты вершин полноэкранного треугольника
+    float2 positions[3] =
+    {
+        float2(-1, -1),
+        float2(-1, 3),
+        float2(3, -1)
+    };
     
-//    output.PosH = float4(positions[vid], 0, 1);
-//    output.TexC = positions[vid] * float2(0.5, -0.5) + 0.5;
+    output.PosH = float4(positions[vid], 0, 1);
+    output.TexC = output.PosH.xy * 0.5 + 0.5;
     
-//    return output;
-//}
+    return output;
+}
 struct VertexIn
 {
     float3 PosL : POSITION;
@@ -100,24 +99,19 @@ struct VertexOut
     float2 TexC : TEXCOORD;
     float3 Tan : TANGENT;
 };
-VertexOut VS(VertexIn vin)
+VSOut VS(VertexIn vin)
 {
-    VertexOut vout = (VertexOut) 0.0f;
+    VSOut vout = (VSOut) 0.0f;
     // Transform to world space.
-    float4 posW = mul(float4(vin.PosL, 1.0f), lightWorld);
-    vout.PosW = posW;
+    float4 posW = mul(float4(vin.PosL, 1.0f), light.gWorld);
 
     vout.PosH = mul(posW, gViewProj);
-    
-   
-    
- 
     
     return vout;
 }
 
 // Пиксельный шейдер освещения
-float4 PS(VertexOut pin) : SV_TARGET
+float4 PS(VSOut pin) : SV_TARGET
 {
     int2 pix = int2(pin.PosH.xy);
     // Вычитываем G-Buffer
@@ -148,12 +142,20 @@ float4 PS(VertexOut pin) : SV_TARGET
         case 2:
             lighting = ComputeDirectionalLight(light, mat, normalW, toEyeW);
             break;
-
+        case 3:
+            lighting = ComputeSpotLight(light, mat, posW, normalW, toEyeW);
+           // lighting = float4(1, 1, 1, 1);
+            break;
     }
+    
   
     float4 litColor = float4(lighting, 1);
     // Common convention to take alpha from diffuse albedo.
     litColor.a = albedo.a;
 
     return litColor;
+}
+float4 PS_debug(VSOut pin) : SV_TARGET
+{
+    return float4(1, 1, 1, 1);
 }
