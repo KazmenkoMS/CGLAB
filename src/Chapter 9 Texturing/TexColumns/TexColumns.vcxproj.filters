@@ -128,5 +128,6 @@
     <Text Include="Shaders\LightingUtil.hlsl" />
     <Text Include="Shaders\LightingPass.hlsl" />
     <Text Include="Shaders\GeometryPass.hlsl" />
+    <Text Include="Shaders\ShadowMap.hlsl" />
   </ItemGroup>
 </Project>

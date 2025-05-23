@@ -13,17 +13,16 @@
     #define NUM_SPOT_LIGHTS 0
 #endif
 #include "LightingUtil.hlsl"
-Texture2D gShadowMap : register(t3); 
 Texture2D gPositionMap : register(t2);
 Texture2D gNormalMap : register(t1);
 Texture2D gAlbedoMap : register(t0);
+
 SamplerState gsamPointWrap : register(s0);
 SamplerState gsamPointClamp : register(s1);
 SamplerState gsamLinearWrap : register(s2);
 SamplerState gsamLinearClamp : register(s3);
 SamplerState gsamAnisotropicWrap : register(s4);
 SamplerState gsamAnisotropicClamp : register(s5);
-SamplerComparisonState gsamShadow : register(s6); 
 
 cbuffer cbPass : register(b0)
 {
@@ -129,46 +128,7 @@ float4 PS(VSOut pin) : SV_TARGET
     {
         albedo, float3(0.05, 0.05, 0.05), 0.7
     };
-    float shadowFactor = 1.0f;
-    
-    float4 shadowPosH = mul(float4(posW, 1.0f), light.LightViewProj);
-    
-    shadowPosH.xyz /= shadowPosH.w;
-    
-    float2 shadowTexC;
-    shadowTexC.x = 0.5f * shadowPosH.x + 0.5f;
-    shadowTexC.y = -0.5f * shadowPosH.y + 0.5f; // If Y is inverted, otherwise +0.5f
-
-    const float shadowBias = 0.005f; // Adjust this value to prevent shadow acne
-
-    if ((saturate(shadowTexC.x) == shadowTexC.x) && (saturate(shadowTexC.y) == shadowTexC.y) && (shadowPosH.z > 0.0f) && (shadowPosH.z < 1.0f))
-    {
-        shadowFactor = gShadowMap.SampleCmpLevelZero(gsamShadow, shadowTexC, shadowPosH.z - shadowBias);
-
-    // For simple Percentage Closer Filtering (PCF 2x2):
-    /*
-    float totalFactor = 0.0f;
-    float2 texelSize = 1.0f / float2(SHADOW_MAP_WIDTH, SHADOW_MAP_HEIGHT); // Pass these as constants
-    for (int y = -1; y <= 0; ++y) // Or -1 to 1 for 3x3, etc.
-    {
-        for (int x = -1; x <= 0; ++x)
-        {
-            totalFactor += gShadowMap.SampleCmpLevelZero(gsamShadow, shadowTexC + float2(x,y) * texelSize, shadowPosH.z - shadowBias);
-        }
-    }
-    shadowFactor = totalFactor / 4.0f; // For 2x2
-    */
-    }
-    else // Out of shadow map bounds, assume lit or handle as needed
-    {
-        shadowFactor = 1.0f;
-    }
-    if (!light.CastsShadows)
-        shadowFactor = 1.0f;
-// Apply shadowFactor to lighting calculations:
-// lighting = ComputePointLight(light, mat, posW, normalW, toEyeW, shadowFactor);
-// Or directly: lighting *= shadowFactor;
-    
+    float3 shadowFactor = 1.0f;
     float3 lighting;
     switch (light.type)
     {
@@ -176,13 +136,14 @@ float4 PS(VSOut pin) : SV_TARGET
             lighting = light.Strength.x * albedo;
             break;
         case 1:
-            lighting = ComputePointLight(light, mat, posW, normalW, toEyeW);
+            lighting = ComputePointLight(light, mat, posW,
+        normalW, toEyeW);
             break;
         case 2:
-            lighting = ComputeDirectionalLight(light, mat, normalW, toEyeW,shadowFactor);
+            lighting = ComputeDirectionalLight(light, mat, normalW, toEyeW);
             break;
         case 3:
-            lighting = ComputeSpotLight(light, mat, posW, normalW, toEyeW,shadowFactor);
+            lighting = ComputeSpotLight(light, mat, posW, normalW, toEyeW);
            // lighting = float4(1, 1, 1, 1);
             break;
     }

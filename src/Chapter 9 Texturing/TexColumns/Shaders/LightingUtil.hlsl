@@ -8,17 +8,21 @@
 
 struct Light
 {
-    float3 Strength;
+    float3 Color;
     float FalloffStart; // point/spot light only
     float3 Direction;   // directional/spot light only
     float FalloffEnd;   // point/spot light only
     float3 Position;    // point light only
     float SpotPower;    // spot light only
     int type;
-    int type1;
-    int type2;
+    float Strength;
+    int CastsShadows;
     int isDebugOn;
     float4x4 gWorld;
+     // --- New Shadow Property ---
+    float4x4 LightViewProj; // World space to Light's clip space for shadow mapping
+    // Potentially an index if using a texture array for shadow maps
+    // uint ShadowMapIndex;
 };
 
 struct Material
@@ -66,14 +70,14 @@ float3 BlinnPhong(float3 lightStrength, float3 lightVec, float3 normal, float3 t
 //---------------------------------------------------------------------------------------
 // Evaluates the lighting equation for directional lights.
 //---------------------------------------------------------------------------------------
-float3 ComputeDirectionalLight(Light L, Material mat, float3 normal, float3 toEye)
+float3 ComputeDirectionalLight(Light L, Material mat, float3 normal, float3 toEye, float shadowFactor)
 {
     // The light vector aims opposite the direction the light rays travel.
     float3 lightVec = -L.Direction;
 
     // Scale light down by Lambert's cosine law.
     float ndotl = max(dot(lightVec, normal), 0.0f);
-    float3 lightStrength = L.Strength * ndotl;
+    float3 lightStrength = L.Color*L.Strength * ndotl * shadowFactor;
 
     return BlinnPhong(lightStrength, lightVec, normal, toEye, mat);
 }
@@ -98,7 +102,7 @@ float3 ComputePointLight(Light L, Material mat, float3 pos, float3 normal, float
 
     // Scale light down by Lambert's cosine law.
     float ndotl = max(dot(lightVec, normal), 0.0f);
-    float3 lightStrength = L.Strength * ndotl;
+    float3 lightStrength = L.Color*L.Strength * ndotl;
 
     // Attenuate light by distance.
     float att = CalcAttenuation(d, L.FalloffStart, L.FalloffEnd);
@@ -110,7 +114,7 @@ float3 ComputePointLight(Light L, Material mat, float3 pos, float3 normal, float
 //---------------------------------------------------------------------------------------
 // Evaluates the lighting equation for spot lights.
 //---------------------------------------------------------------------------------------
-float3 ComputeSpotLight(Light L, Material mat, float3 pos, float3 normal, float3 toEye)
+float3 ComputeSpotLight(Light L, Material mat, float3 pos, float3 normal, float3 toEye, float shadowFactor)
 {
     // The vector from the surface to the light.
     
@@ -128,7 +132,7 @@ float3 ComputeSpotLight(Light L, Material mat, float3 pos, float3 normal, float3
 
     // Scale light down by Lambert's cosine law.
     float ndotl = max(dot(lightVec, normal), 0.0f);
-    float3 lightStrength = L.Strength * ndotl;
+    float3 lightStrength = L.Color*L.Strength * ndotl;
 
     // Attenuate light by distance.
     float att = CalcAttenuation(d, L.FalloffStart, L.FalloffEnd);
@@ -137,6 +141,7 @@ float3 ComputeSpotLight(Light L, Material mat, float3 pos, float3 normal, float3
     // Scale by spotlight
     float spotFactor = pow(max(dot(-lightVec, L.Direction), 0.0f), L.SpotPower);
     lightStrength *= spotFactor;
+    lightStrength *= shadowFactor;
 
     return BlinnPhong(lightStrength, lightVec, normal, toEye, mat);
 }
@@ -145,26 +150,27 @@ float4 ComputeLighting(Light gLights[MaxLights], Material mat,
                        float3 pos, float3 normal, float3 toEye,
                        float3 shadowFactor)
 {
-    float3 result = 0.0f;
+    //float3 result = 0.0f;
     
-    for (int i = 0; i < 2; ++i)
-    {
-        if (gLights[i].type == 1)
-        {
-            result += shadowFactor[i] * ComputeDirectionalLight(gLights[i], mat, normal, toEye);
-        }
-        else if (gLights[i].type == 2)
-        {
-            result += ComputePointLight(gLights[i], mat, pos, normal, toEye);
-        }
-        else if (gLights[i].type == 3)
-        {
-            result += ComputeSpotLight(gLights[i], mat, pos, normal, toEye);
-        }
-    }
+    //for (int i = 0; i < 2; ++i)
+    //{
+    //    if (gLights[i].type == 1)
+    //    {
+    //        result += shadowFactor[i] * ComputeDirectionalLight(gLights[i], mat, normal, toEye);
+    //    }
+    //    else if (gLights[i].type == 2)
+    //    {
+    //        result += ComputePointLight(gLights[i], mat, pos, normal, toEye);
+    //    }
+    //    else if (gLights[i].type == 3)
+    //    {
+    //        result += ComputeSpotLight(gLights[i], mat, pos, normal, toEye);
+    //    }
+    //}
 
 
-        return float4(result, 0.0f);
+    //    return float4(result, 0.0f);
+    return float4(0, 0, 0, 0);
 }
 
 

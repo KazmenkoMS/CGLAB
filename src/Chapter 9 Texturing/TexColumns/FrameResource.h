@@ -41,6 +41,12 @@ struct LightConstants
 {
     Light light;
 };
+
+struct PassShadowConstants
+{
+    DirectX::XMFLOAT4X4 LightViewProj = MathHelper::Identity4x4();
+};
+
 struct Vertex
 {
     DirectX::XMFLOAT3 Pos;
@@ -73,7 +79,7 @@ public:
     std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
     std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
     std::unique_ptr<UploadBuffer<LightConstants>> LightCB = nullptr;
-
+    std::unique_ptr<UploadBuffer<PassShadowConstants>> PassShadowCB = nullptr;
     // Fence value to mark commands up to this fence point.  This lets us
     // check if these frame resources are still in use by the GPU.
     UINT64 Fence = 0;
