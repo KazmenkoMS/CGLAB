@@ -105,7 +105,6 @@ VSOut VS(VertexIn vin)
 // Пиксельный шейдер освещения
 float4 PS(VSOut pin) : SV_TARGET
 {
-    const float PCF_FILTER_RADIUS = 2.0f;
     float2 texelSize = 1.0f / float2(2048, 2048); // Pass these as constants
     
     int2 pix = int2(pin.PosH.xy);
@@ -144,15 +143,15 @@ float4 PS(VSOut pin) : SV_TARGET
         {
             
             float totalFactor = 0.0f;
-            for (float y = -PCF_FILTER_RADIUS; y <= PCF_FILTER_RADIUS; y += 1.0f)
+            for (float y = -light.pcf_level; y <= light.pcf_level; y += 1.0f)
             {
-                for (float x = -PCF_FILTER_RADIUS; x <= PCF_FILTER_RADIUS; x += 1.0f)
+                for (float x = -light.pcf_level; x <= light.pcf_level; x += 1.0f)
                 {
                     float2 offset = float2(x, y) * texelSize;
                     totalFactor += gShadowMap.SampleCmpLevelZero(gsamShadow, shadowTexC + offset, shadowPosH.z - shadowBias);
                 }
             }
-            shadowFactor = totalFactor / ((PCF_FILTER_RADIUS * 2 + 1) * (PCF_FILTER_RADIUS * 2 + 1));
+            shadowFactor = totalFactor / ((light.pcf_level * 2 + 1) * (light.pcf_level * 2 + 1));
         }
         
     

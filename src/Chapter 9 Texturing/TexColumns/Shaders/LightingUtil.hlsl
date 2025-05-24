@@ -24,6 +24,7 @@ struct Light
     // Potentially an index if using a texture array for shadow maps
     // uint ShadowMapIndex;
     int enablePCF;
+    int pcf_level;
 };
 
 struct Material

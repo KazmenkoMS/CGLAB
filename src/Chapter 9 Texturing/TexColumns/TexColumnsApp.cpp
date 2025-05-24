@@ -605,6 +605,8 @@ void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
 			ImGui::Checkbox("Enable PCF", &c);
 			l.enablePCF = c;
 
+			ImGui::DragInt("PCF level", &l.pcf_level, 1, 0, 100);
+
 			ImGui::PopID();
 			
 		}
@@ -641,6 +643,8 @@ void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
 		
 			ImGui::SliderFloat("Spot Power", &l.SpotPower, 0, 10);
 			
+			ImGui::DragInt("PCF level", &l.pcf_level, 1, 0, 100);
+
 			bool c = l.enablePCF;
 			ImGui::Checkbox("Enable PCF", &c);
 			l.enablePCF = c;
@@ -1033,7 +1037,7 @@ void TexColumnsApp::BuildLights()
 	dir.LightCBIndex = mLights.size();
 	dir.Position = { 0,300,0 };
 	dir.Direction = { 0, -1, 0 };
-	dir.Color = { 25/255,50/255,1 };
+	dir.Color = { 1,1,1 };
 	dir.Strength = 1.2;
 	dir.type = 2;
 	dir.LightUp = XMVectorSet(0, 0, -1, 0);
