@@ -23,6 +23,7 @@ struct Light
     float4x4 LightViewProj; // World space to Light's clip space for shadow mapping
     // Potentially an index if using a texture array for shadow maps
     // uint ShadowMapIndex;
+    int enablePCF;
 };
 
 struct Material

@@ -22,7 +22,7 @@ using namespace DirectX::PackedVector;
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "D3D12.lib")
 
-const int gNumFrameResources = 6;
+const int gNumFrameResources = 3;
 
 // Lightweight structure stores parameters to draw a shape.  This will
 // vary from app-to-app.
@@ -179,8 +179,8 @@ private:
 	UINT mGBufferDSVDescriptorSize;
 
 	// shadow resources 
-	const UINT SHADOW_MAP_WIDTH = 8192;
-	const UINT SHADOW_MAP_HEIGHT = 8192;
+	const UINT SHADOW_MAP_WIDTH = 2048;
+	const UINT SHADOW_MAP_HEIGHT = 2048;
 	const DXGI_FORMAT SHADOW_MAP_FORMAT = DXGI_FORMAT_R24G8_TYPELESS; // Resource format
 	const DXGI_FORMAT SHADOW_MAP_DSV_FORMAT = DXGI_FORMAT_D24_UNORM_S8_UINT; // DSV format
 	const DXGI_FORMAT SHADOW_MAP_SRV_FORMAT = DXGI_FORMAT_R24_UNORM_X8_TYPELESS; // SRV format
@@ -336,7 +336,7 @@ void TexColumnsApp::OnResize()
 	CreateGBuffer();
 	BuildDescriptorHeaps();
     // The window resized, so update the aspect ratio and recompute the projection matrix.
-    XMMATRIX P = XMMatrixPerspectiveFovLH(0.4f*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+    XMMATRIX P = XMMatrixPerspectiveFovLH(0.4*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
     XMStoreFloat4x4(&mProj, P);
 
 
@@ -545,15 +545,20 @@ void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
 	
 	auto currLightCB = mCurrFrameResource->LightCB.get();
 	auto currShadowCB = mCurrFrameResource->PassShadowCB.get();
-	int i = 1, lId = 0;
+	int lId = 0;
 	for (auto& l : mLights)
 	{
 		LightConstants lConst;
 		PassShadowConstants shConst;
 		if (l.type == 0)
 		{
-			l.Color = mLights[0].Color; // ambient light equals directional;
-			i++;
+			//l.Color = mLights[0].Color; // ambient light equals directional;
+			std::string s = "\Ambient Light " + std::to_string(lId);
+			ImGui::PushID(++imguiID);
+			ImGui::Text(s.c_str());
+			ImGui::DragFloat("Strength", (float*)&l.Strength,0.02f);
+			ImGui::PopID();
+			
 		}
 		else if (l.type == 1)
 		{
@@ -578,7 +583,7 @@ void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
 			l.isDebugOn = b;
 			
 			ImGui::PopID();
-			i++;
+		
 			l.Position.z = sin(gt.TotalTime()*3)*6;
 		}
 		else if (l.type == 2)
@@ -591,12 +596,17 @@ void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
 			ImGui::ColorEdit3("Color", (float*)&l.Color);
 
 			ImGui::DragFloat("Strength", &l.Strength, 0.1f, 0, 100);
+
 			bool b = l.CastsShadows;
 			ImGui::Checkbox("Cast Shadows", &b);
 			l.CastsShadows = b;
 
+			bool c = l.enablePCF;
+			ImGui::Checkbox("Enable PCF", &c);
+			l.enablePCF = c;
+
 			ImGui::PopID();
-			i++;
+			
 		}
 		else if (l.type == 3)
 		{
@@ -630,7 +640,10 @@ void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
 			ImGui::DragFloat("Faloff End", &l.FalloffEnd,0.1f, 0, 100);
 		
 			ImGui::SliderFloat("Spot Power", &l.SpotPower, 0, 10);
-		
+			
+			bool c = l.enablePCF;
+			ImGui::Checkbox("Enable PCF", &c);
+			l.enablePCF = c;
 
 			bool b = l.CastsShadows;
 			ImGui::Checkbox("Cast Shadows", &b);
@@ -640,7 +653,7 @@ void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
 			ImGui::Checkbox("is Debug On", &b);
 			l.isDebugOn = b;
 			ImGui::PopID();
-			i++;
+			
 
 		}
 		if (l.type == 2 && l.CastsShadows || l.type == 3 && l.CastsShadows) // Directional Light
@@ -667,11 +680,10 @@ void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
 			if (l.type == 2)
 				lightProj = XMMatrixOrthographicLH(viewWidth, viewHeight, nearZ, farZ);
 			else 
-				lightProj = XMMatrixPerspectiveFovLH(0.4f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+				lightProj = XMMatrixPerspectiveFovLH(0.5f * MathHelper::Pi, 1.0f, 1.0f, 1000.0f);
 			XMStoreFloat4x4(&l.LightProj, lightProj);
 			XMStoreFloat4x4(&l.LightViewProj, XMMatrixTranspose(XMMatrixMultiply(lightView,lightProj)));
 		}
-		
 		lConst.light = l;
 		shConst.LightViewProj = l.LightViewProj;
 		currShadowCB->CopyData(l.LightCBIndex,shConst);
@@ -1032,8 +1044,8 @@ void TexColumnsApp::BuildLights()
 	Light ambient;
 	ambient.LightCBIndex = mLights.size();
 	ambient.Position = { 3.0f, 0.0f, 3.0f };
-	ambient.Color = { 0.1,0,0 }; // need only x
-	ambient.Strength = 0.3; // need only x
+	ambient.Color = { 0,0,0 }; // need only x
+	ambient.Strength = 0.2; // need only x
 	ambient.type = 0;
 	XMStoreFloat4x4(&ambient.gWorld, XMMatrixTranspose(XMMatrixTranslation(0, 0, 0) * XMMatrixScaling(1000, 1000, 1000)));
 	mLights.push_back(ambient);
@@ -2105,7 +2117,7 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
 
 	// Swap the back and front buffers
-	ThrowIfFailed(mSwapChain->Present(1, 0));
+	ThrowIfFailed(mSwapChain->Present(0, 0));
 	mCurrBackBuffer = (mCurrBackBuffer + 1) % SwapChainBufferCount;
 
 	// Advance the fence value to mark commands up to this fence point.

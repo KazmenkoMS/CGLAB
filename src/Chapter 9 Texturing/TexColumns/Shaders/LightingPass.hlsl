@@ -1,17 +1,6 @@
 // LightingPass.hlsl
 
-// Defaults for number of lights.
-#ifndef NUM_DIR_LIGHTS
-    #define NUM_DIR_LIGHTS 1
-#endif
 
-#ifndef NUM_POINT_LIGHTS
-    #define NUM_POINT_LIGHTS 1
-#endif
-
-#ifndef NUM_SPOT_LIGHTS
-    #define NUM_SPOT_LIGHTS 0
-#endif
 #include "LightingUtil.hlsl"
 Texture2D gShadowMap : register(t3); 
 Texture2D gPositionMap : register(t2);
@@ -24,6 +13,8 @@ SamplerState gsamLinearClamp : register(s3);
 SamplerState gsamAnisotropicWrap : register(s4);
 SamplerState gsamAnisotropicClamp : register(s5);
 SamplerComparisonState gsamShadow : register(s6); 
+
+
 
 cbuffer cbPass : register(b0)
 {
@@ -114,6 +105,9 @@ VSOut VS(VertexIn vin)
 // Пиксельный шейдер освещения
 float4 PS(VSOut pin) : SV_TARGET
 {
+    const float PCF_FILTER_RADIUS = 2.0f;
+    float2 texelSize = 1.0f / float2(2048, 2048); // Pass these as constants
+    
     int2 pix = int2(pin.PosH.xy);
     // Вычитываем G-Buffer
     float4 albedo = gAlbedoMap.Load(int3(pix, 0));
@@ -146,18 +140,22 @@ float4 PS(VSOut pin) : SV_TARGET
         shadowFactor = gShadowMap.SampleCmpLevelZero(gsamShadow, shadowTexC, shadowPosH.z - shadowBias);
 
     // For simple Percentage Closer Filtering (PCF 2x2):
-    /*
-    float totalFactor = 0.0f;
-    float2 texelSize = 1.0f / float2(SHADOW_MAP_WIDTH, SHADOW_MAP_HEIGHT); // Pass these as constants
-    for (int y = -1; y <= 0; ++y) // Or -1 to 1 for 3x3, etc.
-    {
-        for (int x = -1; x <= 0; ++x)
+        if (light.enablePCF)
         {
-            totalFactor += gShadowMap.SampleCmpLevelZero(gsamShadow, shadowTexC + float2(x,y) * texelSize, shadowPosH.z - shadowBias);
+            
+            float totalFactor = 0.0f;
+            for (float y = -PCF_FILTER_RADIUS; y <= PCF_FILTER_RADIUS; y += 1.0f)
+            {
+                for (float x = -PCF_FILTER_RADIUS; x <= PCF_FILTER_RADIUS; x += 1.0f)
+                {
+                    float2 offset = float2(x, y) * texelSize;
+                    totalFactor += gShadowMap.SampleCmpLevelZero(gsamShadow, shadowTexC + offset, shadowPosH.z - shadowBias);
+                }
+            }
+            shadowFactor = totalFactor / ((PCF_FILTER_RADIUS * 2 + 1) * (PCF_FILTER_RADIUS * 2 + 1));
         }
-    }
-    shadowFactor = totalFactor / 4.0f; // For 2x2
-    */
+        
+    
     }
     else // Out of shadow map bounds, assume lit or handle as needed
     {
@@ -173,7 +171,7 @@ float4 PS(VSOut pin) : SV_TARGET
     switch (light.type)
     {
         case 0:
-            lighting = light.Strength.x * albedo;
+            lighting = light.Strength * albedo;
             break;
         case 1:
             lighting = ComputePointLight(light, mat, posW, normalW, toEyeW);

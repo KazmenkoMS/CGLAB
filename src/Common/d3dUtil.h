@@ -229,6 +229,7 @@ struct Light
     DirectX::XMFLOAT4X4 gWorld;
     // --- New Shadow Properties ---
     DirectX::XMFLOAT4X4 LightViewProj = MathHelper::Identity4x4();
+    int enablePCF = 0;
     DirectX::XMFLOAT4X4 LightView = MathHelper::Identity4x4();
     DirectX::XMFLOAT4X4 LightProj = MathHelper::Identity4x4();
     // Store the combined LightView * LightProj matrix for sending to shaders
