@@ -132,7 +132,7 @@ float4 PS(VSOut pin) : SV_TARGET
     shadowTexC.x = 0.5f * shadowPosH.x + 0.5f;
     shadowTexC.y = -0.5f * shadowPosH.y + 0.5f; // If Y is inverted, otherwise +0.5f
 
-    const float shadowBias = 0.005f; // Adjust this value to prevent shadow acne
+    const float shadowBias = 0.001f; // Adjust this value to prevent shadow acne
 
     if ((saturate(shadowTexC.x) == shadowTexC.x) && (saturate(shadowTexC.y) == shadowTexC.y) && (shadowPosH.z > 0.0f) && (shadowPosH.z < 1.0f))
     {
@@ -162,9 +162,6 @@ float4 PS(VSOut pin) : SV_TARGET
     }
     if (!light.CastsShadows)
         shadowFactor = 1.0f;
-// Apply shadowFactor to lighting calculations:
-// lighting = ComputePointLight(light, mat, posW, normalW, toEyeW, shadowFactor);
-// Or directly: lighting *= shadowFactor;
     
     float3 lighting;
     switch (light.type)
