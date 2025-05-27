@@ -75,6 +75,7 @@ public:
 
     virtual bool Initialize()override;
 
+
 private:
     virtual void OnResize()override;
     virtual void Update(const GameTimer& gt)override;
@@ -97,11 +98,13 @@ private:
 	void UpdateMaterialCBs(const GameTimer& gt);
 	void UpdateMainPassCB(const GameTimer& gt);
 	void CreateGBuffer() override;
+	void CreateSceneTexture();
 	void LoadAllTextures();
 	void LoadTexture(const std::string& name);
     void BuildRootSignature();
     void BuildLightingRootSignature();
 	void BuildShadowPassRootSignature();
+	void BuildPostProcessRootSignature();
 	void BuildLights();
 	void SetLightShapes();
 	void BuildDescriptorHeaps();
@@ -198,6 +201,17 @@ private:
 	const DXGI_FORMAT normalFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	const DXGI_FORMAT albedoFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 
+	// post-process resources
+	ComPtr<ID3D12Resource> mSceneTexture;        // Texture to hold the lit scene
+	CD3DX12_CPU_DESCRIPTOR_HANDLE mSceneRtvHandle;
+	CD3DX12_GPU_DESCRIPTOR_HANDLE mSceneSrvHandle; // GPU handle for the SRV
+	UINT mSceneSrvHeapIndex = -1; // Index in your main SRV heap if you combine them
+
+	ComPtr<ID3D12RootSignature> mPostProcessRootSignature = nullptr;
+	std::unique_ptr<UploadBuffer<float>> mChromaticAberrationCB = nullptr; // Constant buffer for offset
+
+	// Somewhere accessible for ImGui or update logic
+	float gChromaticAberrationOffset = 0.005f;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -282,6 +296,7 @@ bool TexColumnsApp::Initialize()
     BuildRootSignature();
     BuildLightingRootSignature();
 	BuildShadowPassRootSignature();
+	BuildPostProcessRootSignature();
 	BuildLights();
 	BuildShadowMapViews();
 	BuildDescriptorHeaps();
@@ -329,11 +344,80 @@ bool TexColumnsApp::Initialize()
     FlushCommandQueue();
     return true;
 }
- 
+void TexColumnsApp::CreateSceneTexture()
+{
+	// Release previous resources if they exist
+	mSceneTexture.Reset();
+	// mSceneRtvHeap.Reset(); // Only if it's a separate heap
+
+	D3D12_RESOURCE_DESC texDesc = {};
+	texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	texDesc.Alignment = 0;
+	texDesc.Width = mClientWidth;
+	texDesc.Height = mClientHeight;
+	texDesc.DepthOrArraySize = 1;
+	texDesc.MipLevels = 1;
+	texDesc.Format = mBackBufferFormat; // Use your main back buffer format
+	texDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
+	texDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
+	texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+	D3D12_CLEAR_VALUE clearValue;
+	clearValue.Format = mBackBufferFormat;
+	memcpy(clearValue.Color, Colors::Black, sizeof(float) * 4); // Clear to black
+
+	ThrowIfFailed(md3dDevice->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+		D3D12_HEAP_FLAG_NONE,
+		&texDesc,
+		D3D12_RESOURCE_STATE_RENDER_TARGET, // Initial state
+		&clearValue,
+		IID_PPV_ARGS(&mSceneTexture)));
+	mSceneTexture->SetName(L"Scene Texture");
+	
+
+	// Create RTV for mSceneTexture
+	// Option 1: If you have space in your existing mRtvHeap after G-Buffers
+	// Assuming SwapChainBufferCount (for back buffers) + 3 (for G-Buffers) are used
+	// You'll need to manage descriptor heap indices carefully.
+	// For simplicity, let's say it's the next available slot.
+	// Ensure mRtvHeap is large enough.
+
+	// RTV Heap: It's often easier to have one RTV heap and one DSV heap.
+	// If mRtvHeap is just for swap chain, you need to create/extend it.
+	// Let's assume mRtvHeap already exists and is large enough.
+	// The index would be SwapChainBufferCount + 3 (for G-Buffers)
+	UINT sceneRtvIndex = SwapChainBufferCount + 3; // 0,1 for swapchain, 2,3,4 for G-Buffer Albedo,Normal,Position
+	// So, mGBufferRTVs are at indices SwapChainBufferCount to SwapChainBufferCount + 2.
+	// The next available is SwapChainBufferCount + 3.
+
+	mSceneRtvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+		mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+		sceneRtvIndex,
+		mRtvDescriptorSize);
+
+	D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+	rtvDesc.Format = mBackBufferFormat;
+	if (m4xMsaaState)
+	{
+		rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DMS;
+	}
+	else
+	{
+		rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+		rtvDesc.Texture2D.MipSlice = 0;
+	}
+	md3dDevice->CreateRenderTargetView(mSceneTexture.Get(), &rtvDesc, mSceneRtvHandle);
+
+
+	// SRV for mSceneTexture will be created in BuildDescriptorHeaps
+}
 void TexColumnsApp::OnResize()
 {
     D3DApp::OnResize();
 	CreateGBuffer();
+	CreateSceneTexture();
 	BuildDescriptorHeaps();
     // The window resized, so update the aspect ratio and recompute the projection matrix.
     XMMATRIX P = XMMatrixPerspectiveFovLH(0.4*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
@@ -391,8 +475,15 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	UpdateObjectCBs(gt);
 	UpdateMaterialCBs(gt);
 	UpdateLightCBs(gt);
-	UpdateMainPassCB(gt);
+	// post process update
 	ImGui::End();
+	ImGui::Begin("PostProcess Settings");
+	ImGui::Text("Chromatic aberration");
+	ImGui::DragFloat("Offset", &gChromaticAberrationOffset, 0.0001f);
+	ImGui::End();
+	mChromaticAberrationCB->CopyData(0, gChromaticAberrationOffset);
+	//
+	UpdateMainPassCB(gt);
 }
 
 
@@ -998,7 +1089,51 @@ void TexColumnsApp::BuildShadowPassRootSignature()
 		IID_PPV_ARGS(&mShadowPassRootSignature)));
 }
 
+void TexColumnsApp::BuildPostProcessRootSignature() // New function
+{
+	CD3DX12_DESCRIPTOR_RANGE texTable;
+	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0 for gSceneTexture
 
+	CD3DX12_ROOT_PARAMETER slotRootParameter[2];
+	slotRootParameter[0].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);
+	slotRootParameter[1].InitAsConstantBufferView(0); // b0 for cbPostProcess
+
+	auto staticSamplers = GetStaticSamplers(); // Assuming you want to reuse existing samplers [cite: 1]
+	// The ChromaticAberration.hlsl uses s0, so ensure your GetStaticSamplers()
+	// provides a sampler at register s0 (like pointClamp or linearClamp).
+	// The provided shader uses gsamLinearClamp at s0.
+	// Your GetStaticSamplers() defines linearClamp at register s3. [cite: 2]
+	// You should either change the shader to use s3 or adjust sampler registration here.
+	// For now, let's assume the shader uses s3 for gsamLinearClamp.
+	// Or, more simply, pass only the relevant sampler(s).
+
+// For simplicity with the current ChromaticAberration.hlsl using s0:
+	const CD3DX12_STATIC_SAMPLER_DESC linearClampSampler = CD3DX12_STATIC_SAMPLER_DESC(
+		0, // shaderRegister (s0)
+		D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
+
+
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(2, slotRootParameter,
+		1, &linearClampSampler, // Use only the one sampler needed
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	ComPtr<ID3DBlob> serializedRootSig = nullptr;
+	ComPtr<ID3DBlob> errorBlob = nullptr;
+	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
+
+	if (errorBlob != nullptr)
+	{
+		::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+	}
+	ThrowIfFailed(hr);
+
+	ThrowIfFailed(md3dDevice->CreateRootSignature(
+		0,
+		serializedRootSig->GetBufferPointer(),
+		serializedRootSig->GetBufferSize(),
+		IID_PPV_ARGS(mPostProcessRootSignature.GetAddressOf())));
+}
 void TexColumnsApp::CreatePointLight(XMFLOAT3 pos, XMFLOAT3 color, float faloff_start, float faloff_end, float strength)
 {
 	Light light;
@@ -1154,7 +1289,7 @@ void TexColumnsApp::BuildShadowMapViews()
 			i++;
 		}
 	}
-	mLights;
+	//std::cout << mLights.size();
 
 	
 
@@ -1232,7 +1367,42 @@ void TexColumnsApp::BuildDescriptorHeaps()
 		}
 	}
 	
+	// create scene texture SRV
+	int maxShadowSrvIndex = 0;
+	for (const auto& light : mLights) {
+		if ((light.type == 2 || light.type == 3) && light.CastsShadows) { // [cite: 1]
+			if (light.ShadowMapSrvHeapIndex > maxShadowSrvIndex) { // [cite: 1]
+				maxShadowSrvIndex = light.ShadowMapSrvHeapIndex; // [cite: 1]
+			}
+		}
+	}
 
+	// The next available CPU descriptor handle for mSceneTexture's SRV.
+	// It's after all textures, G-Buffer SRVs, and shadow map SRVs.
+	// The SRV for mSceneTexture will be at index: (maxShadowSrvIndex == -1) ? (mTextures.size() + 3) : (maxShadowSrvIndex + 1)
+	mSceneSrvHeapIndex = (maxShadowSrvIndex == -1) ? (mTextures.size() + 3) : (maxShadowSrvIndex + 1);
+
+	CD3DX12_CPU_DESCRIPTOR_HANDLE sceneTexCpuHandle(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+	sceneTexCpuHandle.Offset(mSceneSrvHeapIndex, mCbvSrvDescriptorSize);
+
+	mSceneSrvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	mSceneSrvHandle.Offset(mSceneSrvHeapIndex, mCbvSrvDescriptorSize);
+
+	// Create SRV for mSceneTexture
+	srvDesc.Format = mBackBufferFormat; // Or mSceneTexture->GetDesc().Format
+	if (m4xMsaaState)
+	{
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS;
+	}
+	else
+	{
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.Texture2D.MipLevels = 1;
+		srvDesc.Texture2D.PlaneSlice = 0;
+		srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+	}
+	md3dDevice->CreateShaderResourceView(mSceneTexture.Get(), &srvDesc, sceneTexCpuHandle);
 
 	HRESULT hr = md3dDevice->GetDeviceRemovedReason();
 	if (FAILED(hr))
@@ -1258,6 +1428,8 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 	mShaders["lightingPS"] = d3dUtil::CompileShader(L"Shaders\\LightingPass.hlsl", nullptr, "PS", "ps_5_0");
 	mShaders["lightingPSDebug"] = d3dUtil::CompileShader(L"Shaders\\LightingPass.hlsl", nullptr, "PS_debug", "ps_5_0");
 	mShaders["shadowVS"] = d3dUtil::CompileShader(L"Shaders\\ShadowMap.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["postprocessVS"] = d3dUtil::CompileShader(L"Shaders\\PostProcess.hlsl", nullptr, "VS", "vs_5_0");
+	mShaders["postprocessPS"] = d3dUtil::CompileShader(L"Shaders\\PostProcess.hlsl", nullptr, "PS", "ps_5_0");
 
     mInputLayout =
     {
@@ -1723,7 +1895,35 @@ void TexColumnsApp::BuildPSOs()
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&shadowPsoDesc, IID_PPV_ARGS(&mPSOs["shadow_map"])));
 
+	// PSO for post-process pass
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC caPsoDesc = {};
+	caPsoDesc.InputLayout = { nullptr, 0 }; // Full-screen triangle, no input layout needed from IA
+	caPsoDesc.pRootSignature = mPostProcessRootSignature.Get();
+	caPsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["postprocessVS"]->GetBufferPointer()),
+		mShaders["postprocessVS"]->GetBufferSize()
+	};
+	caPsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["postprocessPS"]->GetBufferPointer()),
+		mShaders["postprocessPS"]->GetBufferSize()
+	};
+	caPsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	caPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // Full-screen quad, no culling usually
+	caPsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT); // Opaque, no blending
+	caPsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	caPsoDesc.DepthStencilState.DepthEnable = FALSE; // No depth testing for post-process
+	caPsoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	caPsoDesc.SampleMask = UINT_MAX;
+	caPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	caPsoDesc.NumRenderTargets = 1;
+	caPsoDesc.RTVFormats[0] = mBackBufferFormat; // Output to the screen
+	caPsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1; // Match swap chain
+	caPsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
+	caPsoDesc.DSVFormat = mDepthStencilFormat; // Not strictly needed if DepthEnable is FALSE
 
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&caPsoDesc, IID_PPV_ARGS(&mPSOs["PostProcess"])));
 }
 
 void TexColumnsApp::BuildFrameResources()
@@ -1735,6 +1935,10 @@ void TexColumnsApp::BuildFrameResources()
         mFrameResources.push_back(std::make_unique<FrameResource>(md3dDevice.Get(),
             1, (UINT)mAllRitems.size(), (UINT)mMaterials.size(),(UINT)mLights.size()));
     }
+	mChromaticAberrationCB = std::make_unique<UploadBuffer<float>>(md3dDevice.Get(), 1, true);
+
+
+
 	mCurrFrameResourceIndex = 0;
 	mCurrFrameResource = mFrameResources[mCurrFrameResourceIndex].get();
 	for (auto& ri : mAllRitems)
@@ -2020,9 +2224,9 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 
 	mCommandList->SetPipelineState(mPSOs["lighting"].Get());
 	
-	mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
+	mCommandList->OMSetRenderTargets(1, &mSceneRtvHandle, true, &DepthStencilView());
 
-	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::Black, 0, nullptr);
+	mCommandList->ClearRenderTargetView(mSceneRtvHandle, Colors::Black, 0, nullptr);
 	
 
 
@@ -2105,13 +2309,29 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	};
 	mCommandList->ResourceBarrier(3, revertBarrier);
 
+	D3D12_RESOURCE_BARRIER presentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+		mSceneTexture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+	mCommandList->ResourceBarrier(1, &presentBarrier);
+
+	mCommandList->SetPipelineState(mPSOs["PostProcess"].Get());
+	mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, nullptr); // No depth stencil for CA pass
+	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::CornflowerBlue, 0, nullptr); // Clear back buffer
+
+	mCommandList->SetGraphicsRootSignature(mPostProcessRootSignature.Get());
+	// Descriptor heaps should already be set if mSrvDescriptorHeap is the one used by mPostProcessRootSignature
+	// mCommandList->SetDescriptorHeaps(1, mSrvDescriptorHeap.GetAddressOf()); // Ensure it's set
+
+	mCommandList->SetGraphicsRootDescriptorTable(0, mSceneSrvHandle); // Bind mSceneTexture SRV to t0
+	mCommandList->SetGraphicsRootConstantBufferView(1, mChromaticAberrationCB->Resource()->GetGPUVirtualAddress()); // Bind CB to b0
+
+	mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	mCommandList->DrawInstanced(3, 1, 0, 0); // Draw full-screen triangle
+
 	ImGui::Render();
 	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
 
-	D3D12_RESOURCE_BARRIER presentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
-		CurrentBackBuffer(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-	mCommandList->ResourceBarrier(1, &presentBarrier);
-
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(), // [cite: 1]
+		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT)); // [cite: 1]
 
 	// Done recording commands.
 	ThrowIfFailed(mCommandList->Close());
