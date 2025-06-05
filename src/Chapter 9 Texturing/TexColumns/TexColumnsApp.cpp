@@ -15,6 +15,7 @@
 #include "imgui.h"
 Camera cam;
 static int imguiID = 0;
+static bool CCenabled = false;
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
 using namespace DirectX::PackedVector;
@@ -481,10 +482,12 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	ImGui::Begin("PostProcess Settings");
 	ImGui::Text("Chromatic aberration");
 	ImGui::DragFloat("Offset", &gChromaticAberrationOffset, 0.0001f);
+	ImGui::Checkbox("Enable color correction", &CCenabled);
 	ImGui::End();
 	mChromaticAberrationCB->CopyData(0, gChromaticAberrationOffset);
 	//
 	UpdateMainPassCB(gt);
+
 }
 
 
@@ -1238,7 +1241,7 @@ void TexColumnsApp::BuildLights()
 	ambient.LightCBIndex = mLights.size();
 	ambient.Position = { 3.0f, 0.0f, 3.0f };
 	ambient.Color = { 0,0,0 }; // need only x
-	ambient.Strength = 0.0; // need only x
+	ambient.Strength = 0.3; // need only x
 	ambient.type = 0;
 	XMStoreFloat4x4(&ambient.gWorld, XMMatrixTranspose(XMMatrixTranslation(0, 0, 0) * XMMatrixScaling(1000, 1000, 1000)));
 	mLights.push_back(ambient);
@@ -2381,7 +2384,10 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	mCommandList->SetGraphicsRootDescriptorTable(0, mSceneSrvHandle); // Bind mSceneTexture SRV to t0
 	mCommandList->SetGraphicsRootConstantBufferView(1, mChromaticAberrationCB->Resource()->GetGPUVirtualAddress()); // Bind CB to b0
 	CD3DX12_GPU_DESCRIPTOR_HANDLE luthandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	luthandle.Offset(TexOffsets["textures/lut_effect"], mCbvSrvDescriptorSize);
+	if (CCenabled)
+		luthandle.Offset(TexOffsets["textures/lut_effect"], mCbvSrvDescriptorSize);
+	else 
+		luthandle.Offset(TexOffsets["textures/lut_neutral"], mCbvSrvDescriptorSize);
 	mCommandList->SetGraphicsRootDescriptorTable(2, luthandle); // Bind CB to b0
 
 	mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
