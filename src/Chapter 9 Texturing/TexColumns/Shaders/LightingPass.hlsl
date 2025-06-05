@@ -2,6 +2,7 @@
 
 
 #include "LightingUtil.hlsl"
+Texture2D gShadowTexture : register(t4); 
 Texture2D gShadowMap : register(t3); 
 Texture2D gPositionMap : register(t2);
 Texture2D gNormalMap : register(t1);
@@ -98,7 +99,7 @@ VSOut VS(VertexIn vin)
     float4 posW = mul(float4(vin.PosL, 1.0f), light.gWorld);
 
     vout.PosH = mul(posW, gViewProj);
-    
+    vout.TexC = vin.TexC;
     return vout;
 }
 
@@ -138,7 +139,7 @@ float4 PS(VSOut pin) : SV_TARGET
     {
         shadowFactor = gShadowMap.SampleCmpLevelZero(gsamShadow, shadowTexC, shadowPosH.z - shadowBias);
 
-    // For simple Percentage Closer Filtering (PCF 2x2):
+        // For simple Percentage Closer Filtering (PCF 2x2):
         if (light.enablePCF)
         {
             
@@ -154,12 +155,16 @@ float4 PS(VSOut pin) : SV_TARGET
             shadowFactor = totalFactor / ((light.pcf_level * 2 + 1) * (light.pcf_level * 2 + 1));
         }
         
-    
     }
     else // Out of shadow map bounds, assume lit or handle as needed
     {
         shadowFactor = 1.0f;
     }
+    
+    float2 uv = pin.TexC * 5; // повторяем текстуру, увеличь/уменьши как хочешь
+    float4 pattern = gShadowTexture.Sample(gsamAnisotropicWrap, uv);
+    shadowFactor += pattern.r*0.1;
+    shadowFactor = saturate(shadowFactor);
     if (!light.CastsShadows)
         shadowFactor = 1.0f;
     
@@ -181,7 +186,8 @@ float4 PS(VSOut pin) : SV_TARGET
             break;
     }
     
-  
+   
+     
     float4 litColor = float4(lighting, 1);
     // Common convention to take alpha from diffuse albedo.
     litColor.a = albedo.a;
