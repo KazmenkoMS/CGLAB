@@ -538,10 +538,10 @@ void TexColumnsApp::OnMouseDown(WPARAM btnState, int x, int y)
     mLastMousePos.y = y;
 
     SetCapture(mhMainWnd);
-	if ((btnState & MK_LBUTTON) != 0 && !ImGui::GetIO().WantCaptureMouse)
-	{
-		RotateSpotlightTowardCursor(x, y);
-	}
+	//if ((btnState & MK_LBUTTON) != 0 && !ImGui::GetIO().WantCaptureMouse)
+	//{
+	//	RotateSpotlightTowardCursor(x, y);
+	//}
 }
 
 void TexColumnsApp::OnMouseUp(WPARAM btnState, int x, int y)

@@ -161,10 +161,13 @@ float4 PS(VSOut pin) : SV_TARGET
         shadowFactor = 1.0f;
     }
     
-    float2 uv = pin.TexC * 5; // повторяем текстуру, увеличь/уменьши как хочешь
-    float4 pattern = gShadowTexture.Sample(gsamAnisotropicWrap, uv);
-    shadowFactor += pattern.r*0.1;
-    shadowFactor = saturate(shadowFactor);
+    // shadow pattern
+    //float2 uv = pin.TexC * 5; // повторяем текстуру, увеличь/уменьши как хочешь
+    //float4 pattern = gShadowTexture.Sample(gsamAnisotropicWrap, uv);
+    //shadowFactor += pattern.r*0.1;
+    //shadowFactor = saturate(shadowFactor);
+    
+    
     if (!light.CastsShadows)
         shadowFactor = 1.0f;
     
