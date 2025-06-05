@@ -174,7 +174,9 @@
     <ClCompile Include="..\..\Common\MathHelper.cpp" />
     <ClCompile Include="..\..\Common\model.cpp" />
     <ClCompile Include="FrameResource.cpp" />
+    <ClCompile Include="Lights.cpp" />
     <ClCompile Include="ParticleSystem.cpp" />
+    <ClCompile Include="Shadows.cpp" />
     <ClCompile Include="TexColumnsApp.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -198,6 +200,7 @@
     <ClInclude Include="..\..\Common\UploadBuffer.h" />
     <ClInclude Include="FrameResource.h" />
     <ClInclude Include="ParticleSystem.h" />
+    <ClInclude Include="TexColumnsApp.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="Shaders\Default.hlsl">

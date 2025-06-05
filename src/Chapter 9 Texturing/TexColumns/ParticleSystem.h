@@ -43,7 +43,16 @@ public:
     virtual int Emit(int numToEmit) = 0;
     virtual void InitializeSystem() = 0;
     virtual void KillSystem() = 0;
-
+    float spread = 1.5f;
+    float min_strength = 3.0f;
+    float max_strength = 8.0f;
+    float min_size = 0.05f;
+    float max_size = 0.15f;
+    float min_lifespan = 1.0f;
+    float max_lifespan = 2.0f;
+    float min_weight = 0.5f;
+    float max_weight = 1.5f;
+    int m_maxParticles;
     const std::vector<ParticleInstanceData>& GetParticleRenderData() const { return m_renderData; }
     int GetAliveParticleCount() const { return static_cast<int>(m_renderData.size()); }
 
@@ -52,8 +61,7 @@ protected:
 
     std::vector<Particle> m_particleList;
     std::vector<ParticleInstanceData> m_renderData; // Data ready for GPU upload
-
-    int m_maxParticles;
+    
     int m_numParticles; // Could track active particles here or derive from m_renderData.size()
     DirectX::XMFLOAT3 m_origin;
     float m_accumulatedTime;
@@ -89,17 +97,16 @@ public:
         p.PrevPosition = m_origin;
 
         // Random upward velocity
-        float spread = 1.5f;
         p.Velocity = DirectX::XMFLOAT3(
             MathHelper::RandF(-spread, spread),
-            MathHelper::RandF(3.0f, 8.0f), // Upwards
+            MathHelper::RandF(min_strength, max_strength), // Upwards
             MathHelper::RandF(-spread, spread)
         );
         p.Acceleration = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f); // Gravity will be the main force
-        p.Energy = MathHelper::RandF(1.0f, 3.0f); // Lifespan in seconds
-        p.Size = MathHelper::RandF(0.05f, 0.15f);
+        p.Energy = MathHelper::RandF(min_lifespan, max_lifespan); // Lifespan in seconds
+        p.Size = MathHelper::RandF(min_size, max_size);
         p.SizeDelta = -p.Size / p.Energy; // Shrink to nothing over its lifetime
-        p.Weight = MathHelper::RandF(0.5f, 1.5f);
+        p.Weight = MathHelper::RandF(min_weight, max_weight);
         p.WeightDelta = 0.0f;
         p.Color = DirectX::XMFLOAT4(MathHelper::RandF(0.5f, 1.0f), MathHelper::RandF(0.5f, 1.0f), MathHelper::RandF(0.5f, 1.0f), 1.0f); // Random bright color
         p.ColorDelta = DirectX::XMFLOAT4(0.0f, -0.5f / p.Energy, -0.5f / p.Energy, -1.0f / p.Energy); // Fade out

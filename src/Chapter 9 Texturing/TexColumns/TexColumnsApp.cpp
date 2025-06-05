@@ -1,252 +1,9 @@
 //***************************************************************************************
 // TexColumnsApp.cpp by Frank Luna (C) 2015 All Rights Reserved.
 //***************************************************************************************
-#include "../../Common/Camera.h"
-#include "../../Common/d3dApp.h"
-#include "../../Common/MathHelper.h"
-#include "../../Common/UploadBuffer.h"
-#include "../../Common/GeometryGenerator.h"
-#include "ParticleSystem.h"
-#include <filesystem>
-#include "FrameResource.h"
-#include <iostream>
-
-#include "imgui_impl_dx12.h"
-#include "imgui_impl_win32.h"
-#include "imgui.h"
-Camera cam;
-static int imguiID = 0;
-using Microsoft::WRL::ComPtr;
-using namespace DirectX;
-using namespace DirectX::PackedVector;
-
-#pragma comment(lib, "d3dcompiler.lib")
-#pragma comment(lib, "D3D12.lib")
+#include "TexColumnsApp.h"
 
 const int gNumFrameResources = 3;
-
-struct ParticleVertex
-{
-	DirectX::XMFLOAT3 Pos;
-};
-// Lightweight structure stores parameters to draw a shape.  This will
-// vary from app-to-app.
-struct RenderItem
-{
-	RenderItem() = default;
-    RenderItem(const RenderItem& rhs) = delete;
-
-    // World matrix of the shape that describes the object's local space
-    // relative to the world space, which defines the position, orientation,
-    // and scale of the object in the world.
-    XMFLOAT4X4 World = MathHelper::Identity4x4();
-    XMMATRIX ScaleM = XMMatrixIdentity();
-	XMMATRIX RotationM = XMMatrixIdentity();
-	XMMATRIX TranslationM = XMMatrixIdentity();
-	XMFLOAT3 Position = { 0.0f, 0.0f, 2.0f };
-	XMFLOAT3 RotationAngle = { 0.0f, .0f, 0.0f };
-	XMFLOAT3 Scale = { 1.0f, 1.0f, 1.0f };
-	XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
-
-	// Dirty flag indicating the object data has changed and we need to update the constant buffer.
-	// Because we have an object cbuffer for each FrameResource, we have to apply the
-	// update to each FrameResource.  Thus, when we modify obect data we should set 
-	// NumFramesDirty = gNumFrameResources so that each frame resource gets the update.
-	int NumFramesDirty = gNumFrameResources;
-
-	// Index into GPU constant buffer corresponding to the ObjectCB for this render item.
-	UINT ObjCBIndex = -1;
-
-	Material* Mat = nullptr;
-	MeshGeometry* Geo = nullptr;
-
-    // Primitive topology.
-    D3D12_PRIMITIVE_TOPOLOGY PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-
-    // DrawIndexedInstanced parameters.
-    UINT IndexCount = 0;
-    UINT StartIndexLocation = 0;
-    int BaseVertexLocation = 0;
-	std::string Name;
-};
-
-class TexColumnsApp : public D3DApp
-{
-public:
-    TexColumnsApp(HINSTANCE hInstance);
-    TexColumnsApp(const TexColumnsApp& rhs) = delete;
-    TexColumnsApp& operator=(const TexColumnsApp& rhs) = delete;
-    ~TexColumnsApp();
-
-    virtual bool Initialize()override;
-
-
-private:
-    virtual void OnResize()override;
-    virtual void Update(const GameTimer& gt)override;
-	virtual void DeferredDraw(const GameTimer& gt)override;
-    virtual void OnMouseDown(WPARAM btnState, int x, int y)override;
-    virtual void OnMouseUp(WPARAM btnState, int x, int y)override;
-    virtual void OnMouseMove(WPARAM btnState, int x, int y)override;
-	virtual void MoveBackFwd(float step)override;
-	virtual void MoveLeftRight(float step)override;
-	virtual void MoveUpDown(float step)override;
-	void OnKeyPressed(const GameTimer& gt, WPARAM key) override;
-	void OnKeyReleased(const GameTimer& gt, WPARAM key) override;
-	std::wstring GetCamSpeed() override;
-	void UpdateCamera(const GameTimer& gt);
-	void BuildShadowMapViews();
-	void AnimateMaterials(const GameTimer& gt);
-	void UpdateObjectCBs(const GameTimer& gt);
-	void UpdateLightCBs(const GameTimer& gt);
-	void UpdateMaterialCBs(const GameTimer& gt);
-	void UpdateMainPassCB(const GameTimer& gt);
-	void CreateGBuffer() override;
-	void CreateSceneTexture();
-	void LoadAllTextures();
-	void LoadTexture(const std::string& name);
-    void BuildRootSignature();
-    void BuildLightingRootSignature();
-	void BuildShadowPassRootSignature();
-	void BuildPostProcessRootSignature();
-	void BuildLights();
-	void SetLightShapes();
-	void BuildDescriptorHeaps();
-    void BuildShadersAndInputLayout();
-    void BuildShapeGeometry();
-    void BuildPSOs();
-    void BuildFrameResources();
-	void CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness);
-    void BuildMaterials();
-	void RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMFLOAT3 Scale, XMFLOAT3 Rotation, XMFLOAT3 Position);
-	void BuildCustomMeshGeometry(std::string name, UINT& meshVertexOffset, UINT& meshIndexOffset, UINT& prevVertSize, UINT& prevIndSize, std::vector<Vertex>& vertices, std::vector<std::uint16_t>& indices, MeshGeometry* Geo);
-    void BuildRenderItems();
-	void DrawSceneToShadowMap();
-    void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
-
-	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 7> GetStaticSamplers();
-	void CreateSpotLight(XMFLOAT3 pos, XMFLOAT3 rot, XMFLOAT3 color, float faloff_start, float faloff_end, float strength, float spotpower);
-	void CreatePointLight(XMFLOAT3 pos, XMFLOAT3 color, float faloff_start, float faloff_end,float strength);
-
-	// Add new methods for particles
-	void BuildParticleGeometry();
-	void BuildParticleBuffers();
-	void BuildParticleRootSignature();
-	void BuildParticlePSO();
-	void UpdateParticles(const GameTimer& gt);
-	void DrawParticles(ID3D12GraphicsCommandList* cmdList);
-
-
-private:
-	std::unordered_map<std::string, unsigned int>ObjectsMeshCount;
-    std::vector<std::unique_ptr<FrameResource>> mFrameResources;
-    FrameResource* mCurrFrameResource = nullptr;
-    int mCurrFrameResourceIndex = 0;
-	//
-	std::unordered_map<std::string, int>TexOffsets;
-	//
-    UINT mCbvSrvDescriptorSize = 0;
-
-    ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
-    ComPtr<ID3D12RootSignature> mLightingRootSignature = nullptr;
-	ComPtr<ID3D12RootSignature> mShadowPassRootSignature = nullptr;
-
-	ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap = nullptr;
-	ComPtr<ID3D12DescriptorHeap> m_ImGuiSrvDescriptorHeap; // Member variable
-
-	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
-	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
-	std::unordered_map<std::string, std::unique_ptr<Texture>> mTextures;
-	std::unordered_map<std::string, ComPtr<ID3DBlob>> mShaders;
-	std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> mPSOs;
-
-    std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
- 
-	// List of all the render items.
-	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
-	std::vector<Light>mLights;
-	// Render items divided by PSO.
-	std::vector<RenderItem*> mOpaqueRitems;
-
-    PassConstants mMainPassCB;
-	XMFLOAT3 mEyePos = { 0.0f, 0.0f, 0.0f };
-	XMFLOAT4X4 mView = MathHelper::Identity4x4();
-	XMFLOAT4X4 mProj = MathHelper::Identity4x4();
-
-    float mTheta = 1.5f*XM_PI;
-    float mPhi = 0.2f*XM_PI;
-    float mRadius = 15.0f;
-
-    POINT mLastMousePos;
-
-	// G-Buffer ресурсы
-	ComPtr<ID3D12Resource> mGBufferPosition;
-	ComPtr<ID3D12Resource> mGBufferNormal;
-	ComPtr<ID3D12Resource> mGBufferAlbedo;
-	ComPtr<ID3D12Resource> mGBufferDepthStencil;
-	ComPtr<ID3D12DescriptorHeap> mGBufferSrvHeap = nullptr;
-
-	// Дескрипторы для G-Buffer
-	CD3DX12_CPU_DESCRIPTOR_HANDLE mGBufferRTVs[3]; // 0:Position, 1:Normal, 2:Albedo
-	CD3DX12_CPU_DESCRIPTOR_HANDLE mGBufferDSV;
-	CD3DX12_GPU_DESCRIPTOR_HANDLE mGBufferSRVs[3]; // SRV для шейдеров
-
-	UINT mGBufferRTVDescriptorSize;
-	UINT mGBufferDSVDescriptorSize;
-
-	// shadow resources 
-	const UINT SHADOW_MAP_WIDTH = 2048;
-	const UINT SHADOW_MAP_HEIGHT = 2048;
-	const DXGI_FORMAT SHADOW_MAP_FORMAT = DXGI_FORMAT_R24G8_TYPELESS; // Resource format
-	const DXGI_FORMAT SHADOW_MAP_DSV_FORMAT = DXGI_FORMAT_D24_UNORM_S8_UINT; // DSV format
-	const DXGI_FORMAT SHADOW_MAP_SRV_FORMAT = DXGI_FORMAT_R24_UNORM_X8_TYPELESS; // SRV format
-	Microsoft::WRL::ComPtr<ID3D12Resource> mShadowMap;
-	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mShadowDsvHeap; // A separate heap for shadow map DSVs
-	D3D12_VIEWPORT mShadowViewport;
-	D3D12_RECT mShadowScissorRect;
-
-	// Размеры как у окна
-	UINT width = mClientWidth;
-	UINT height = mClientHeight;
-
-	// Форматы:
-	const DXGI_FORMAT positionFormat = DXGI_FORMAT_R32G32B32A32_FLOAT;
-	const DXGI_FORMAT normalFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
-	const DXGI_FORMAT albedoFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-
-	// post-process resources
-	ComPtr<ID3D12Resource> mSceneTexture;        // Texture to hold the lit scene
-	CD3DX12_CPU_DESCRIPTOR_HANDLE mSceneRtvHandle;
-	CD3DX12_GPU_DESCRIPTOR_HANDLE mSceneSrvHandle; // GPU handle for the SRV
-	UINT mSceneSrvHeapIndex = -1; // Index in your main SRV heap if you combine them
-	ComPtr<ID3D12RootSignature> mPostProcessRootSignature = nullptr;
-	std::unique_ptr<UploadBuffer<float>> mChromaticAberrationCB = nullptr; // Constant buffer for offset
-
-
-	// Particle System Members
-	std::unique_ptr<ParticleSystem> mParticleSystem;
-	DirectX::XMFLOAT3 mParticleGravity = { 0.0f, -9.81f, 0.0f }; // Example gravity
-	const int MAX_PARTICLES = 10000; // Max particles for the system
-
-	ComPtr<ID3D12Resource> mParticleVertexBuffer; // Dummy VB for a single point
-	ComPtr<ID3D12Resource> mParticleIndexBuffer;  // Dummy IB for a single point
-	ComPtr<ID3D12Resource> mParticleUploadVB;     // For uploading dummy VB
-	ComPtr<ID3D12Resource> mParticleUploadIB;     // For uploading dummy IB
-
-	// These are our two main structured buffers as per the requirement
-	ComPtr<ID3D12Resource> mGpuParticleAppendBuffer; // CPU writes live particle data here (conceptual "append")
-	ComPtr<ID3D12Resource> mGpuParticleConsumeBuffer; // Copied from AppendBuffer, rendering shader "consumes" from here (SRV)
-
-	ComPtr<ID3D12Resource> mParticleDataUploadBuffer; // Intermediate upload buffer for particle instance data
-
-	ComPtr<ID3D12RootSignature> mParticleRootSignature;
-	ComPtr<ID3D12PipelineState> mParticlePSO;
-	std::vector<D3D12_INPUT_ELEMENT_DESC> mParticleInputLayout;
-	UINT mParticleSrvHeapIndex = 0;
-
-	// Somewhere accessible for ImGui or update logic
-	float gChromaticAberrationOffset = 0.000f;
-};
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
     PSTR cmdLine, int showCmd)
@@ -309,12 +66,13 @@ bool TexColumnsApp::Initialize()
 	AllocConsole();
 
 	// Перенаправляем стандартные потоки.
-	 freopen("CONIN$", "r", stdin);
+	freopen("CONIN$", "r", stdin);
 	freopen("CONOUT$", "w", stdout);
 	freopen("CONOUT$", "w", stderr);
 
 	cam.SetPosition(0, 3, 10);
 	cam.RotateY(MathHelper::Pi);
+
     if(!D3DApp::Initialize())
         return false;
 
@@ -335,6 +93,7 @@ bool TexColumnsApp::Initialize()
 	// Initialize Particle System (before resources that might depend on its max size)
 	mParticleSystem = std::make_unique<FountainParticleSystem>(MAX_PARTICLES, DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f)); // Origin at (0,1,0)
 	mParticleSystem->InitializeSystem(); // Ensure it's ready
+
 	BuildParticleGeometry(); // Before BuildParticleBuffers if VB/IB are created here
 	BuildParticleBuffers();    // Create GPU buffers for particles
 	BuildParticleRootSignature(); // For particle rendering shader
@@ -350,7 +109,20 @@ bool TexColumnsApp::Initialize()
 	BuildParticlePSO(); // After shaders and root signature
     BuildRenderItems();
     BuildFrameResources();
+	InitImGUI();
+	
+    // Execute the initialization commands.
+    ThrowIfFailed(mCommandList->Close());
+    ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
+    mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
 
+    // Wait until initialization is complete.
+    FlushCommandQueue();
+    return true;
+}
+
+void TexColumnsApp::InitImGUI()
+{
 	D3D12_DESCRIPTOR_HEAP_DESC imGuiHeapDesc = {};
 	imGuiHeapDesc.NumDescriptors = 1;
 	imGuiHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -378,318 +150,6 @@ bool TexColumnsApp::Initialize()
 	init_info.LegacySingleSrvGpuDescriptor = m_ImGuiSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
 	ImGui_ImplWin32_Init(mhMainWnd);
 	ImGui_ImplDX12_Init(&init_info);
-    // Execute the initialization commands.
-    ThrowIfFailed(mCommandList->Close());
-    ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
-    mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
-
-    // Wait until initialization is complete.
-    FlushCommandQueue();
-    return true;
-}
-
-// particles
-void TexColumnsApp::BuildParticleGeometry()
-{
-	// Create a single point vertex. Position is irrelevant as it will be overridden by instance data.
-	ParticleVertex particleVertex = { DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f) };
-	std::uint16_t particleIndex = 0;
-
-	const UINT vbByteSize = sizeof(ParticleVertex);
-	const UINT ibByteSize = sizeof(std::uint16_t);
-
-	
-
-	mParticleVertexBuffer = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
-		mCommandList.Get(), &particleVertex, vbByteSize, mParticleUploadVB);
-
-	mParticleIndexBuffer = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
-		mCommandList.Get(), &particleIndex, ibByteSize, mParticleUploadIB);
-}
-
-void TexColumnsApp::BuildParticleBuffers()
-{
-	// Size for the maximum number of particles
-	UINT particleInstanceDataSize = sizeof(ParticleInstanceData);
-	UINT bufferSize = MAX_PARTICLES * particleInstanceDataSize;
-
-	// 1. mGpuParticleAppendBuffer: CPU will upload live particle data here.
-	//    It's a default heap resource. We'll copy to it.
-	ThrowIfFailed(md3dDevice->CreateCommittedResource(
-		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
-		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(bufferSize), // Structured buffer
-		D3D12_RESOURCE_STATE_COPY_DEST, // Initial state for receiving data from upload buffer
-		nullptr,
-		IID_PPV_ARGS(&mGpuParticleAppendBuffer)));
-	mGpuParticleAppendBuffer->SetName(L"GpuParticleAppendBuffer");
-
-	// 2. mGpuParticleConsumeBuffer: Data is copied here from AppendBuffer.
-	//    Rendering shader reads from this as an SRV.
-	ThrowIfFailed(md3dDevice->CreateCommittedResource(
-		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
-		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(bufferSize), // Structured buffer
-		D3D12_RESOURCE_STATE_COMMON, // Initial state, will be transitioned to COPY_DEST then PIXEL_SHADER_RESOURCE
-		nullptr,
-		IID_PPV_ARGS(&mGpuParticleConsumeBuffer)));
-	mGpuParticleConsumeBuffer->SetName(L"GpuParticleConsumeBuffer");
-
-	// 3. mParticleDataUploadBuffer: Intermediate upload heap buffer for CPU to write to.
-	ThrowIfFailed(md3dDevice->CreateCommittedResource(
-		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
-		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(bufferSize),
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(&mParticleDataUploadBuffer)));
-	mParticleDataUploadBuffer->SetName(L"ParticleDataUploadBuffer");
-}
-
-void TexColumnsApp::BuildParticleRootSignature()
-{
-	CD3DX12_DESCRIPTOR_RANGE srvTable;
-	// Particle instance data will be in t0
-	srvTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
-
-	CD3DX12_ROOT_PARAMETER slotRootParameter[2];
-
-	slotRootParameter[0].InitAsDescriptorTable(1, &srvTable, D3D12_SHADER_VISIBILITY_VERTEX); // SRV for particle data visible to VS
-	slotRootParameter[1].InitAsConstantBufferView(0); // b0 for PassConstants (ViewProj matrix etc.)
-
-	auto staticSamplers = GetStaticSamplers(); // You can reuse existing samplers if needed
-
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(
-		2, slotRootParameter,
-		(UINT)staticSamplers.size(), staticSamplers.data(), // Or 0, nullptr if no samplers needed for basic points
-		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
-
-	ComPtr<ID3DBlob> serializedRootSig = nullptr;
-	ComPtr<ID3DBlob> errorBlob = nullptr;
-	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
-		serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
-
-	if (errorBlob != nullptr)
-	{
-		::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-	}
-	ThrowIfFailed(hr);
-
-	ThrowIfFailed(md3dDevice->CreateRootSignature(
-		0,
-		serializedRootSig->GetBufferPointer(),
-		serializedRootSig->GetBufferSize(),
-		IID_PPV_ARGS(&mParticleRootSignature)));
-	mParticleRootSignature->SetName(L"ParticleRootSignature");
-}
-
-void TexColumnsApp::BuildParticlePSO()
-{
-	D3D12_GRAPHICS_PIPELINE_STATE_DESC particlePsoDesc;
-	ZeroMemory(&particlePsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
-	particlePsoDesc.InputLayout = { mParticleInputLayout.data(), (UINT)mParticleInputLayout.size() };
-	particlePsoDesc.pRootSignature = mParticleRootSignature.Get();
-	particlePsoDesc.VS =
-	{
-		reinterpret_cast<BYTE*>(mShaders["particleVS"]->GetBufferPointer()),
-		mShaders["particleVS"]->GetBufferSize()
-	};
-	particlePsoDesc.PS =
-	{
-		reinterpret_cast<BYTE*>(mShaders["particlePS"]->GetBufferPointer()),
-		mShaders["particlePS"]->GetBufferSize()
-	};
-	particlePsoDesc.GS =
-	{
-		reinterpret_cast<BYTE*>(mShaders["particleGS"]->GetBufferPointer()),
-		mShaders["particleGS"]->GetBufferSize()
-	};
-
-	particlePsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	particlePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-	// particlePsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // Points are usually not culled
-
-	// Blend state for transparent particles (additive or alpha blend)
-	D3D12_RENDER_TARGET_BLEND_DESC transparencyBlendDesc;
-	transparencyBlendDesc.BlendEnable = FALSE;
-	transparencyBlendDesc.LogicOpEnable = FALSE;
-	transparencyBlendDesc.SrcBlend = D3D12_BLEND_SRC_ALPHA; // Common for alpha blending
-	transparencyBlendDesc.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-	transparencyBlendDesc.BlendOp = D3D12_BLEND_OP_ADD;
-	transparencyBlendDesc.SrcBlendAlpha = D3D12_BLEND_ONE;
-	transparencyBlendDesc.DestBlendAlpha = D3D12_BLEND_ZERO;
-	transparencyBlendDesc.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-	transparencyBlendDesc.LogicOp = D3D12_LOGIC_OP_NOOP;
-	transparencyBlendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-
-	particlePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT); // Start with default
-	particlePsoDesc.BlendState.RenderTarget[0] = transparencyBlendDesc; // Apply blend to RT0
-
-	particlePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-	particlePsoDesc.DepthStencilState.DepthEnable = TRUE;
-	// For particles, you might want to disable depth writes but keep depth tests
-	// particlePsoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-	// particlePsoDesc.DepthStencilState.DepthEnable = TRUE;
-
-
-	particlePsoDesc.SampleMask = UINT_MAX;
-	particlePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT; // Render as points
-	// If you decide to make particles quads (via geometry shader or expanding in VS),
-	// this would be D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE. And your dummy geometry
-	// would be a quad, and DrawIndexedInstanced would use 6 indices for a quad.
-
-	particlePsoDesc.NumRenderTargets = 1;
-	particlePsoDesc.RTVFormats[0] = mBackBufferFormat; // Render to the scene texture or back buffer
-	particlePsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
-	particlePsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
-	particlePsoDesc.DSVFormat = mDepthStencilFormat;
-
-	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&particlePsoDesc, IID_PPV_ARGS(&mPSOs["particles"])));
-}
-
-void TexColumnsApp::UpdateParticles(const GameTimer& gt)
-{
-	if (!mParticleSystem) return;
-
-	// Emit some particles (e.g., every few frames or based on time)
-	// This is just an example, control emission as you like
-	static float timeToEmit = 0.0f;
-	timeToEmit += gt.DeltaTime();
-	if (timeToEmit > 0.016f) // Roughly 60 FPS emission rate
-	{
-		mParticleSystem->Emit(5); // Emit 5 new particles
-		timeToEmit = 0.0f;
-	}
-	if (GetAsyncKeyState('P') & 0x8000) // Hold P to emit
-	{
-		mParticleSystem->Emit(50);
-	}
-
-
-	mParticleSystem->Update(gt.DeltaTime(), mParticleGravity);
-
-	// Get render data from the particle system
-	const auto& particleRenderData = mParticleSystem->GetParticleRenderData();
-	int numLiveParticles = mParticleSystem->GetAliveParticleCount();
-	if (numLiveParticles > 0)
-	{
-		// Upload particle data to mGpuParticleAppendBuffer via mParticleDataUploadBuffer
-		UINT bufferSize = numLiveParticles * sizeof(ParticleInstanceData);
-		if (bufferSize == 0) return; // No particles to upload
-
-		// Map the upload buffer
-		void* pMappedData = nullptr;
-		ThrowIfFailed(mParticleDataUploadBuffer->Map(0, nullptr, &pMappedData));
-		memcpy(pMappedData, particleRenderData.data(), bufferSize);
-		mParticleDataUploadBuffer->Unmap(0, nullptr);
-
-		// Get the current command list (assuming it's reset and ready for Update related copies)
-		// This part is tricky as Update() usually doesn't record commands.
-		// A common pattern is to do these uploads just before DeferredDraw() starts,
-		// or in a dedicated resource update phase that uses a command list.
-
-		// For now, let's assume we do this copy in DeferredDraw right before using the data.
-		// So, this UpdateParticles just prepares the CPU-side data.
-		// The actual upload will be handled in DeferredDraw.
-	}
-}
-
-void TexColumnsApp::DrawParticles(ID3D12GraphicsCommandList* cmdList)
-{
-	if (!mParticleSystem || mParticleSystem->GetAliveParticleCount() == 0)
-	{
-		return;
-	}
-
-	int numLiveParticles = mParticleSystem->GetAliveParticleCount();
-	const auto& particleRenderData = mParticleSystem->GetParticleRenderData();
-	UINT dataSize = numLiveParticles * sizeof(ParticleInstanceData);
-
-	if (dataSize == 0) return;
-
-	// 1. Upload data from CPU to mParticleDataUploadBuffer, then copy to mGpuParticleAppendBuffer
-	// This part is sensitive to when the command list is open and ready.
-	// Assuming cmdList is the main command list used for DeferredDraw.
-	{
-		void* pMappedData = nullptr;
-		ThrowIfFailed(mParticleDataUploadBuffer->Map(0, nullptr, &pMappedData));
-		memcpy(pMappedData, particleRenderData.data(), dataSize);
-		mParticleDataUploadBuffer->Unmap(0, nullptr);
-
-		cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mGpuParticleAppendBuffer.Get(),
-			D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST));
-
-		cmdList->CopyBufferRegion(
-			mGpuParticleAppendBuffer.Get(), // Dest
-			0,                             // DestOffset
-			mParticleDataUploadBuffer.Get(),// Src
-			0,                             // SrcOffset
-			dataSize);                     // NumBytes
-
-		cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mGpuParticleAppendBuffer.Get(),
-			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE)); // Ready for next copy
-	}
-
-	// 2. Copy from mGpuParticleAppendBuffer to mGpuParticleConsumeBuffer
-	{
-		cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mGpuParticleConsumeBuffer.Get(),
-			D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST));
-
-		cmdList->CopyResource(mGpuParticleConsumeBuffer.Get(), mGpuParticleAppendBuffer.Get());
-
-		cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mGpuParticleConsumeBuffer.Get(),
-			D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)); // Ready for shader to read
-	}
-
-	// 3. Set PSO and Root Signature
-	cmdList->SetPipelineState(mPSOs["particles"].Get());
-	cmdList->SetGraphicsRootSignature(mParticleRootSignature.Get());
-
-
-	// Corrected setting VB/IB:
-	D3D12_VERTEX_BUFFER_VIEW vbv;
-	vbv.BufferLocation = mParticleVertexBuffer->GetGPUVirtualAddress();
-	vbv.StrideInBytes = sizeof(ParticleVertex);
-	vbv.SizeInBytes = sizeof(ParticleVertex);
-	cmdList->IASetVertexBuffers(0, 1, &vbv);
-
-	D3D12_INDEX_BUFFER_VIEW ibv;
-	ibv.BufferLocation = mParticleIndexBuffer->GetGPUVirtualAddress();
-	ibv.Format = DXGI_FORMAT_R16_UINT;
-	ibv.SizeInBytes = sizeof(std::uint16_t);
-	cmdList->IASetIndexBuffer(&ibv);
-
-	cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST); // Set to point list
-
-	// 5. Bind PassConstants (assuming b0 for particles)
-	auto passCB = mCurrFrameResource->PassCB->Resource(); // Use the main pass CB
-	cmdList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress()); // Slot 1 for PassCB in particle root sig
-
-	// 6. Bind Particle SRV (mGpuParticleConsumeBuffer)
-	// You need the GPU descriptor handle for the SRV of mGpuParticleConsumeBuffer.
-	// Assuming you stored mParticleSrvHeapIndex:
-	CD3DX12_GPU_DESCRIPTOR_HANDLE particleSrvHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	
-	if (mParticleSrvHeapIndex == -1) { /* Error or not initialized */ return; } // Add mParticleSrvHeapIndex member
-	particleSrvHandle.Offset(mParticleSrvHeapIndex, mCbvSrvDescriptorSize); // Use the member index
-
-	cmdList->SetGraphicsRootDescriptorTable(0, particleSrvHandle); // Slot 0 for ParticleData SRV
-
-	// 7. Draw
-	cmdList->DrawIndexedInstanced(
-		1,                  // IndexCountPerInstance (1 for our single point)
-		numLiveParticles,   // InstanceCount
-		0,                  // StartIndexLocation
-		0,                  // BaseVertexLocation
-		0);                 // StartInstanceLocation
-
-	// Transition mGpuParticleConsumeBuffer back to common if needed for next frame's copy
-	cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mGpuParticleConsumeBuffer.Get(),
-		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON));
-	// Transition mGpuParticleAppendBuffer back to common if needed for next frame's copy
-	cmdList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mGpuParticleAppendBuffer.Get(),
-		D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON));
-
 }
 
 void TexColumnsApp::CreateSceneTexture()
@@ -725,20 +185,8 @@ void TexColumnsApp::CreateSceneTexture()
 	mSceneTexture->SetName(L"Scene Texture");
 	
 
-	// Create RTV for mSceneTexture
-	// Option 1: If you have space in your existing mRtvHeap after G-Buffers
-	// Assuming SwapChainBufferCount (for back buffers) + 3 (for G-Buffers) are used
-	// You'll need to manage descriptor heap indices carefully.
-	// For simplicity, let's say it's the next available slot.
-	// Ensure mRtvHeap is large enough.
-
-	// RTV Heap: It's often easier to have one RTV heap and one DSV heap.
-	// If mRtvHeap is just for swap chain, you need to create/extend it.
-	// Let's assume mRtvHeap already exists and is large enough.
-	// The index would be SwapChainBufferCount + 3 (for G-Buffers)
 	UINT sceneRtvIndex = SwapChainBufferCount + 3; // 0,1 for swapchain, 2,3,4 for G-Buffer Albedo,Normal,Position
-	// So, mGBufferRTVs are at indices SwapChainBufferCount to SwapChainBufferCount + 2.
-	// The next available is SwapChainBufferCount + 3.
+	
 
 	mSceneRtvHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(
 		mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
@@ -758,15 +206,16 @@ void TexColumnsApp::CreateSceneTexture()
 	}
 	md3dDevice->CreateRenderTargetView(mSceneTexture.Get(), &rtvDesc, mSceneRtvHandle);
 
-
 	// SRV for mSceneTexture will be created in BuildDescriptorHeaps
 }
+
 void TexColumnsApp::OnResize()
 {
     D3DApp::OnResize();
 	CreateGBuffer();
 	CreateSceneTexture();
 	BuildDescriptorHeaps();
+
     // The window resized, so update the aspect ratio and recompute the projection matrix.
     XMMATRIX P = XMMatrixPerspectiveFovLH(0.4*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
     XMStoreFloat4x4(&mProj, P);
@@ -790,11 +239,14 @@ void TexColumnsApp::Update(const GameTimer& gt)
 		WaitForSingleObject(eventHandle, INFINITE);
 		CloseHandle(eventHandle);
 	}
+
 	UpdateCamera(gt);
+
 	// === ImGui Setup ===
 	ImGui_ImplDX12_NewFrame();
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
+
 	ImGui::Begin("Settings");
 	ImGui::Text("Objects\n\n");
 	for (auto& rItem : mAllRitems)
@@ -823,9 +275,9 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	UpdateObjectCBs(gt);
 	UpdateMaterialCBs(gt);
 	UpdateLightCBs(gt);
+	ImGui::End();
 	UpdateParticles(gt);
 	// post process update
-	ImGui::End();
 	ImGui::Begin("PostProcess Settings");
 	ImGui::Text("Chromatic aberration");
 	ImGui::DragFloat("Offset", &gChromaticAberrationOffset, 0.0001f);
@@ -1359,85 +811,7 @@ void TexColumnsApp::BuildRootSignature()
         IID_PPV_ARGS(mRootSignature.GetAddressOf())));
 }
 
-// build lighting root signature 
-void TexColumnsApp::BuildLightingRootSignature()
-{
 
-
-	CD3DX12_DESCRIPTOR_RANGE gPosition;
-	gPosition.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0
-	CD3DX12_DESCRIPTOR_RANGE gNormal;
-	gNormal.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1); // t1
-	CD3DX12_DESCRIPTOR_RANGE gAlbedo;
-	gAlbedo.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2); // t2
-	CD3DX12_DESCRIPTOR_RANGE shadowMapRange;
-	shadowMapRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3); // Shadow map at register t3
-
-	CD3DX12_ROOT_PARAMETER rootParams[7];
-	rootParams[0].InitAsDescriptorTable(1, &gPosition, D3D12_SHADER_VISIBILITY_ALL);
-	rootParams[1].InitAsDescriptorTable(1, &gNormal, D3D12_SHADER_VISIBILITY_ALL);
-	rootParams[2].InitAsDescriptorTable(1, &gAlbedo, D3D12_SHADER_VISIBILITY_ALL);
-	rootParams[3].InitAsConstantBufferView(0); // b0 
-	rootParams[4].InitAsConstantBufferView(1); // b1
-	rootParams[5].InitAsConstantBufferView(2); // b2
-	rootParams[6].InitAsDescriptorTable(1, &shadowMapRange, D3D12_SHADER_VISIBILITY_PIXEL); // PIXEL visibility
-
-	auto staticSamplers = GetStaticSamplers();
-
-	CD3DX12_ROOT_SIGNATURE_DESC rsDesc;
-	rsDesc.Init(_countof(rootParams), rootParams,
-		(UINT)staticSamplers.size(), staticSamplers.data(),
-		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
-
-
-	ComPtr<ID3DBlob> serializedRootSig = nullptr;
-	ComPtr<ID3DBlob> errorBlob = nullptr;
-	HRESULT hr = D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1,
-		serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
-
-	if (errorBlob != nullptr)
-	{
-		::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-	}
-	ThrowIfFailed(hr);
-
-	ThrowIfFailed(md3dDevice->CreateRootSignature(
-		0,
-		serializedRootSig->GetBufferPointer(),
-		serializedRootSig->GetBufferSize(),
-		IID_PPV_ARGS(mLightingRootSignature.GetAddressOf())));
-}
-
-// shadow root signature 
-void TexColumnsApp::BuildShadowPassRootSignature()
-{
-	CD3DX12_ROOT_PARAMETER slotRootParameter[2];
-
-	slotRootParameter[0].InitAsConstantBufferView(0); // ObjectConstants (b0)
-	slotRootParameter[1].InitAsConstantBufferView(1); // ShadowPassConstants (b1 - gLightViewProj)
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc;
-	rootSigDesc.Init(
-		_countof(slotRootParameter), slotRootParameter,
-		0, nullptr, // No static samplers needed for basic shadow map generation
-		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
-
-	ComPtr<ID3DBlob> serializedRootSig = nullptr;
-	ComPtr<ID3DBlob> errorBlob = nullptr;
-	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
-		serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
-
-	if (errorBlob != nullptr)
-	{
-		::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-	}
-	ThrowIfFailed(hr);
-
-	ThrowIfFailed(md3dDevice->CreateRootSignature(
-		0,
-		serializedRootSig->GetBufferPointer(),
-		serializedRootSig->GetBufferSize(),
-		IID_PPV_ARGS(&mShadowPassRootSignature)));
-}
 
 void TexColumnsApp::BuildPostProcessRootSignature() // New function
 {
@@ -1449,15 +823,8 @@ void TexColumnsApp::BuildPostProcessRootSignature() // New function
 	slotRootParameter[1].InitAsConstantBufferView(0); // b0 for cbPostProcess
 
 	auto staticSamplers = GetStaticSamplers(); // Assuming you want to reuse existing samplers [cite: 1]
-	// The ChromaticAberration.hlsl uses s0, so ensure your GetStaticSamplers()
-	// provides a sampler at register s0 (like pointClamp or linearClamp).
-	// The provided shader uses gsamLinearClamp at s0.
-	// Your GetStaticSamplers() defines linearClamp at register s3. [cite: 2]
-	// You should either change the shader to use s3 or adjust sampler registration here.
-	// For now, let's assume the shader uses s3 for gsamLinearClamp.
-	// Or, more simply, pass only the relevant sampler(s).
 
-// For simplicity with the current ChromaticAberration.hlsl using s0:
+
 	const CD3DX12_STATIC_SAMPLER_DESC linearClampSampler = CD3DX12_STATIC_SAMPLER_DESC(
 		0, // shaderRegister (s0)
 		D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
@@ -1484,84 +851,9 @@ void TexColumnsApp::BuildPostProcessRootSignature() // New function
 		serializedRootSig->GetBufferSize(),
 		IID_PPV_ARGS(mPostProcessRootSignature.GetAddressOf())));
 }
-void TexColumnsApp::CreatePointLight(XMFLOAT3 pos, XMFLOAT3 color, float faloff_start, float faloff_end, float strength)
-{
-	Light light;
-	light.LightCBIndex = mLights.size();
 
-	light.Position = pos;
-	light.Color = color;
-	light.FalloffStart = faloff_start;
-	light.FalloffEnd = faloff_end;
-	light.type = 1;
-	auto& world = XMMatrixScaling(faloff_end * 2, faloff_end * 2, faloff_end * 2) * XMMatrixTranslation(pos.x, pos.y, pos.z);
-	XMStoreFloat4x4(&light.gWorld, XMMatrixTranspose(world));
-	mLights.push_back(light);
-}
-void TexColumnsApp::CreateSpotLight(XMFLOAT3 pos, XMFLOAT3 rot, XMFLOAT3 color, float faloff_start, float faloff_end, float strength, float spotpower)
-{
-	Light light;
-	light.LightCBIndex = mLights.size();
 
-	light.Position = pos;
-	light.Color = color;
-	light.FalloffStart = faloff_start;
-	light.FalloffEnd = faloff_end;
-	light.Rotation = rot;
-	light.LightUp = XMVectorSet(0, 1, 0, 0);
-	light.type = 3;
-	light.Strength = strength;
-	light.SpotPower = spotpower;
-	mLights.push_back(light);
-}
 
-void TexColumnsApp::BuildLights()
-{
-	// directional
-	Light dir;
-	dir.LightCBIndex = mLights.size();
-	dir.Position = { 0,300,0 };
-	dir.Direction = { 0, -1, 0 };
-	dir.Color = { 1,1,1 };
-	dir.Strength = 0.8;
-	dir.type = 2;
-	dir.LightUp = XMVectorSet(0, 0, -1, 0);
-	auto& world = XMMatrixScaling(1000,1000,1000);
-	XMStoreFloat4x4(&dir.gWorld, XMMatrixTranspose(world));
-	mLights.push_back(dir);
-
-	Light ambient;
-	ambient.LightCBIndex = mLights.size();
-	ambient.Position = { 3.0f, 0.0f, 3.0f };
-	ambient.Color = { 0,0,0 }; // need only x
-	ambient.Strength = 0.4; // need only x
-	ambient.type = 0;
-	XMStoreFloat4x4(&ambient.gWorld, XMMatrixTranspose(XMMatrixTranslation(0, 0, 0) * XMMatrixScaling(1000, 1000, 1000)));
-	mLights.push_back(ambient);
-
-	CreatePointLight({ -3,3,0 }, { 4,0,0 }, 1, 5,1);
-	CreatePointLight({ 3,3,0 }, { 0,0,4 }, 1, 5,1);
-
-	CreateSpotLight({ -5,3,30 }, { 0,0,-90 }, { 1,1,1 }, 1, 30, 6, 1);
-}
-
-void TexColumnsApp::SetLightShapes()
-{
-	for (auto& light : mLights)
-	{
-
-		switch (light.type)
-		{
-		case 1:
-			light.ShapeGeo = mGeometries["shapeGeo"]->DrawArgs["sphere"];
-			break;
-		case 3:
-			light.ShapeGeo = mGeometries["shapeGeo"]->DrawArgs["box"];
-			break;
-		}
-	}
-	mLights;
-}
 
 void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness)
 {
@@ -1576,81 +868,10 @@ void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiff
 	mMaterials[_name] = std::move(material);
 }
 
-void TexColumnsApp::BuildShadowMapViews()
-{
-	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
-	dsvHeapDesc.NumDescriptors = 2; // For one shadow map
-	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-	dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-
-	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&mShadowDsvHeap)));
-	int i = 0;
-	for (auto& light : mLights)
-	{
-
-		if (light.type == 2 || light.type == 3)
-		{
-			// Define shadow map properties (can be members of the class or taken from a specific light)
-			mShadowViewport = { 0.0f, 0.0f, (float)SHADOW_MAP_WIDTH, (float)SHADOW_MAP_HEIGHT, 0.0f, 1.0f };
-			mShadowScissorRect = { 0, 0, (int)SHADOW_MAP_WIDTH, (int)SHADOW_MAP_HEIGHT };
-
-			// Create the shadow map texture
-			D3D12_RESOURCE_DESC texDesc;
-			ZeroMemory(&texDesc, sizeof(D3D12_RESOURCE_DESC));
-			texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-			texDesc.Alignment = 0;
-			texDesc.Width = SHADOW_MAP_WIDTH;
-			texDesc.Height = SHADOW_MAP_HEIGHT;
-			texDesc.DepthOrArraySize = 1;
-			texDesc.MipLevels = 1;
-			texDesc.Format = SHADOW_MAP_FORMAT;
-			texDesc.SampleDesc.Count = 1;
-			texDesc.SampleDesc.Quality = 0;
-			texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-			texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-
-			D3D12_CLEAR_VALUE clearValue;
-			clearValue.Format = SHADOW_MAP_DSV_FORMAT;
-			clearValue.DepthStencil.Depth = 1.0f;
-			clearValue.DepthStencil.Stencil = 0;
-
-			ThrowIfFailed(md3dDevice->CreateCommittedResource(
-				&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
-				D3D12_HEAP_FLAG_NONE,
-				&texDesc,
-				D3D12_RESOURCE_STATE_GENERIC_READ, // Start in generic read, will transition to DEPTH_WRITE
-				&clearValue,
-				IID_PPV_ARGS(&light.ShadowMap)));
-			// Create DSV for the shadow map.
-			// We need a DSV heap. Let's create one specifically for shadow maps for clarity,
-			// or you can extend your existing mDsvHeap if it's not solely for the main depth buffer.
-			
-			D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc;
-			dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
-			dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-			dsvDesc.Format = SHADOW_MAP_DSV_FORMAT;
-			dsvDesc.Texture2D.MipSlice = 0;
-			light.ShadowMapDsvHandle = mShadowDsvHeap->GetCPUDescriptorHandleForHeapStart();
-			light.ShadowMapDsvHandle.Offset(i, mDsvDescriptorSize); // Use the stored index
-			md3dDevice->CreateDepthStencilView(light.ShadowMap.Get(), &dsvDesc, light.ShadowMapDsvHandle);
-
-			light.ShadowMapSrvHeapIndex = mTextures.size() + 3 + i;
-			i++;
-		}
-	}
-	//std::cout << mLights.size();
-
-	
-
-
-	
-}
 
 void TexColumnsApp::BuildDescriptorHeaps()
 {
-	//
-	// Create the SRV heap.
-	//
+	// ========= TEXTURES SRV's=========
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
 	srvHeapDesc.NumDescriptors = mTextures.size() + 3 + mLights.size() + 1;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -1658,11 +879,6 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
 
 
-	// Создание SRV -------------------------------------------------------------
-
-	//
-	// Fill out the heap with actual descriptors.
-	//
 	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -1681,13 +897,15 @@ void TexColumnsApp::BuildDescriptorHeaps()
 		TexOffsets[tex.first] = offset;
 		offset++;
 	}
+	// ================================
+
+	// ========= GBUFFER SRV's=========
 	srvDesc.Texture2D.MipLevels = 1;
 	// Albedo SRV
 	srvDesc.Format = albedoFormat;
 	md3dDevice->CreateShaderResourceView(
 		mGBufferAlbedo.Get(), &srvDesc, hDescriptor);
 	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-
 	// Normal SRV
 	srvDesc.Format = normalFormat;
 	md3dDevice->CreateShaderResourceView(
@@ -1715,20 +933,18 @@ void TexColumnsApp::BuildDescriptorHeaps()
 			md3dDevice->CreateShaderResourceView(light.ShadowMap.Get(), &srvDesc, shadowMapSrvHandle);
 		}
 	}
-	
-	// create scene texture SRV
+	// ====================================
+
+	// ========= POSTPROCESS SRV's=========
 	int maxShadowSrvIndex = 0;
 	for (const auto& light : mLights) {
-		if ((light.type == 2 || light.type == 3) && light.CastsShadows) { // [cite: 1]
-			if (light.ShadowMapSrvHeapIndex > maxShadowSrvIndex) { // [cite: 1]
-				maxShadowSrvIndex = light.ShadowMapSrvHeapIndex; // [cite: 1]
+		if ((light.type == 2 || light.type == 3) && light.CastsShadows) { 
+			if (light.ShadowMapSrvHeapIndex > maxShadowSrvIndex) {
+				maxShadowSrvIndex = light.ShadowMapSrvHeapIndex;
 			}
 		}
 	}
 
-	// The next available CPU descriptor handle for mSceneTexture's SRV.
-	// It's after all textures, G-Buffer SRVs, and shadow map SRVs.
-	// The SRV for mSceneTexture will be at index: (maxShadowSrvIndex == -1) ? (mTextures.size() + 3) : (maxShadowSrvIndex + 1)
 	mSceneSrvHeapIndex = (maxShadowSrvIndex == -1) ? (mTextures.size() + 3) : (maxShadowSrvIndex + 1);
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE sceneTexCpuHandle(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
@@ -1737,8 +953,7 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	mSceneSrvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 	mSceneSrvHandle.Offset(mSceneSrvHeapIndex, mCbvSrvDescriptorSize);
 
-	// Create SRV for mSceneTexture
-	srvDesc.Format = mBackBufferFormat; // Or mSceneTexture->GetDesc().Format
+	srvDesc.Format = mBackBufferFormat;
 	if (m4xMsaaState)
 	{
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS;
@@ -1752,8 +967,9 @@ void TexColumnsApp::BuildDescriptorHeaps()
 		srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
 	}
 	md3dDevice->CreateShaderResourceView(mSceneTexture.Get(), &srvDesc, sceneTexCpuHandle);
+	// ==================================
 
-
+	// ========= PARTICLES SRV's=========
 	D3D12_SHADER_RESOURCE_VIEW_DESC particleSrvDesc = {};
 	particleSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	particleSrvDesc.Format = DXGI_FORMAT_UNKNOWN; // For structured buffer
@@ -1767,7 +983,7 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	CD3DX12_CPU_DESCRIPTOR_HANDLE particleCpuHandle(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 	particleCpuHandle.Offset(mParticleSrvHeapIndex, mCbvSrvDescriptorSize);
 	md3dDevice->CreateShaderResourceView(mGpuParticleConsumeBuffer.Get(), &particleSrvDesc, particleCpuHandle);
-
+	// ====================================
 
 	HRESULT hr = md3dDevice->GetDeviceRemovedReason();
 	if (FAILED(hr))
@@ -1795,7 +1011,6 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 	mShaders["shadowVS"] = d3dUtil::CompileShader(L"Shaders\\ShadowMap.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["postprocessVS"] = d3dUtil::CompileShader(L"Shaders\\PostProcess.hlsl", nullptr, "VS", "vs_5_0");
 	mShaders["postprocessPS"] = d3dUtil::CompileShader(L"Shaders\\PostProcess.hlsl", nullptr, "PS", "ps_5_0");
-	// New Particle Shaders
 	mShaders["particleVS"] = d3dUtil::CompileShader(L"Shaders\\ParticleShader.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["particleGS"] = d3dUtil::CompileShader(L"Shaders\\ParticleShader.hlsl", nullptr, "GS", "gs_5_1");
 	mShaders["particlePS"] = d3dUtil::CompileShader(L"Shaders\\ParticleShader.hlsl", nullptr, "PS", "ps_5_1");
@@ -2101,40 +1316,8 @@ void TexColumnsApp::BuildShapeGeometry()
 
 void TexColumnsApp::BuildPSOs()
 {
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC opaquePsoDesc;
 
-	//
-	// PSO for opaque objects.
-	//
-    ZeroMemory(&opaquePsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
-	opaquePsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
-	opaquePsoDesc.pRootSignature = mRootSignature.Get();
-	opaquePsoDesc.VS = 
-	{ 
-		reinterpret_cast<BYTE*>(mShaders["standardVS"]->GetBufferPointer()), 
-		mShaders["standardVS"]->GetBufferSize()
-	};
-	opaquePsoDesc.PS = 
-	{ 
-		reinterpret_cast<BYTE*>(mShaders["opaquePS"]->GetBufferPointer()),
-		mShaders["opaquePS"]->GetBufferSize()
-	};
-	opaquePsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	opaquePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; // Изменяем Solid на Wireframe
-
-	opaquePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-	opaquePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-	opaquePsoDesc.SampleMask = UINT_MAX;
-	opaquePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-	opaquePsoDesc.NumRenderTargets = 1;
-	opaquePsoDesc.RTVFormats[0] = mBackBufferFormat;
-	opaquePsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
-	opaquePsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
-	opaquePsoDesc.DSVFormat = mDepthStencilFormat;
-    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
-
-	// Geometry pass PSO
-
+	//=========GEOMETRY PASS PSO=========
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC gbPsoDesc = {};
 	gbPsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
 	gbPsoDesc.pRootSignature = mRootSignature.Get(); // используем модифицированную корневую сигнатуру
@@ -2160,9 +1343,9 @@ void TexColumnsApp::BuildPSOs()
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&gbPsoDesc, IID_PPV_ARGS(&mPSOs["gbuffer"])));
 
-	// Lighting pass PSO
+	
 
-
+	//=========LIGHTING PASS PSO=========
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC lightPsoDesc = {};
 	lightPsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() }; // если используем SV_VertexID в шейдере, входного layout не нужно
 	lightPsoDesc.pRootSignature = mLightingRootSignature.Get(); // наша новая корнев. сигнатура для освещения
@@ -2189,38 +1372,27 @@ void TexColumnsApp::BuildPSOs()
 	blendDesc.IndependentBlendEnable = FALSE;
 	blendDesc.RenderTarget[0] = rtBlendDesc;
 	lightPsoDesc.BlendState = blendDesc;
-
-
-
-
 	lightPsoDesc.SampleMask = UINT_MAX;
 	lightPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	
-	lightPsoDesc.NumRenderTargets = 1;                   // выводим один финальный цвет
-	lightPsoDesc.RTVFormats[0] = mBackBufferFormat;      // формат экрана (обычно DXGI_FORMAT_R8G8B8A8_UNORM)
+	lightPsoDesc.NumRenderTargets = 1;                  
+	lightPsoDesc.RTVFormats[0] = mBackBufferFormat;     
 	lightPsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
 	lightPsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
-	lightPsoDesc.DSVFormat = mDepthStencilFormat; // не используем буфер глубины
-
-	//D3D12_DEPTH_STENCIL_DESC dsDesc = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-	//dsDesc.DepthEnable = TRUE;
-	//dsDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // можно отключить запись, но оставить тест
-	//dsDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
-	//lightPsoDesc.DepthStencilState = dsDesc;
-
+	lightPsoDesc.DSVFormat = mDepthStencilFormat;
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&lightPsoDesc, IID_PPV_ARGS(&mPSOs["lighting"])));
 
-	// Lighting(QUAD) pass PSO
 
 
+	//=========LIGHTING(QUAD) PASS PSO=========
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC lightQUADPsoDesc = lightPsoDesc;
 	lightQUADPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
 	lightQUADPsoDesc.VS = { reinterpret_cast<BYTE*>(mShaders["lightingQUADVS"]->GetBufferPointer()),
 						mShaders["lightingQUADVS"]->GetBufferSize() };
 	
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&lightQUADPsoDesc, IID_PPV_ARGS(&mPSOs["lightingQUAD"])));
-	// Debug lighting shapes PSO
 
+	//=========LIGHTING SHAPES PSO=========
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC lightShapesPsoDesc = lightPsoDesc;
 	lightShapesPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 	lightShapesPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
@@ -2234,7 +1406,7 @@ void TexColumnsApp::BuildPSOs()
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&lightShapesPsoDesc, IID_PPV_ARGS(&mPSOs["lightingShapes"])));
 
-	// PSO for shadow map pass
+	//=========SHADOW PASS PSO=========
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC shadowPsoDesc = {};
 	shadowPsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() }; // Same input layout
 	shadowPsoDesc.pRootSignature = mShadowPassRootSignature.Get();
@@ -2243,19 +1415,8 @@ void TexColumnsApp::BuildPSOs()
 		reinterpret_cast<BYTE*>(mShaders["shadowVS"]->GetBufferPointer()),
 		mShaders["shadowVS"]->GetBufferSize()
 	};
-	// shadowPsoDesc.PS can be omitted if no pixel shader (Null PS)
-	// If you have an alpha testing PS:
-	// shadowPsoDesc.PS =
-	// {
-	//    reinterpret_cast<BYTE*>(mShaders["shadowPS"]->GetBufferPointer()),
-	//    mShaders["shadowPS"]->GetBufferSize()
-	// };
+	
 	shadowPsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	// You might need to tweak RasterizerState for shadow acne (DepthBias, SlopeScaledDepthBias)
-	// e.g., shadowPsoDesc.RasterizerState.DepthBias = 100000; // Experiment with values
-	// shadowPsoDesc.RasterizerState.DepthBiasClamp = 0.0f;
-	// shadowPsoDesc.RasterizerState.SlopeScaledDepthBias = 1.0f; // Experiment
-
 	shadowPsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT); // No color writing
 	shadowPsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	shadowPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
@@ -2269,7 +1430,7 @@ void TexColumnsApp::BuildPSOs()
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&shadowPsoDesc, IID_PPV_ARGS(&mPSOs["shadow_map"])));
 
-	// PSO for post-process pass
+	//=========POST PROCESS PASS PSO=========
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC caPsoDesc = {};
 	caPsoDesc.InputLayout = { nullptr, 0 }; // Full-screen triangle, no input layout needed from IA
 	caPsoDesc.pRootSignature = mPostProcessRootSignature.Get();
@@ -2311,8 +1472,6 @@ void TexColumnsApp::BuildFrameResources()
             1, (UINT)mAllRitems.size(), (UINT)mMaterials.size(),(UINT)mLights.size()));
     }
 	mChromaticAberrationCB = std::make_unique<UploadBuffer<float>>(md3dDevice.Get(), 1, true);
-
-
 
 	mCurrFrameResourceIndex = 0;
 	mCurrFrameResource = mFrameResources[mCurrFrameResourceIndex].get();
@@ -2374,7 +1533,7 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 
 void TexColumnsApp::BuildRenderItems()
 {
-	auto boxRitem = std::make_unique<RenderItem>();
+	/*auto boxRitem = std::make_unique<RenderItem>();
 	boxRitem->Name = "box";
 	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.0f, -10.0f));
 	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1,1,1));
@@ -2385,7 +1544,7 @@ void TexColumnsApp::BuildRenderItems()
 	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["box"].IndexCount;
 	boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
-	mAllRitems.push_back(std::move(boxRitem));
+	mAllRitems.push_back(std::move(boxRitem));*/
 
 	RenderCustomMesh("building", "sponza", "", XMFLOAT3(0.07, 0.07, 0.07), XMFLOAT3(0, 3.14 / 2, 0), XMFLOAT3(0, 0, 0));
 	//RenderCustomMesh("nigga", "negr", "NiggaMat", XMFLOAT3(3, 3, 3), XMFLOAT3(0, 3.14, 0), XMFLOAT3(0, 3, 0));
@@ -2471,11 +1630,11 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), nullptr));
 
 
-	// draw shadow maps 
+	//  =========SHADOWMAP BUILDING=========
 	DrawSceneToShadowMap();
 
 
-	// ==GEOMETRY PASS==
+	// =========GEOMETRY PASS=========
 	mCommandList->SetPipelineState(mPSOs["gbuffer"].Get());
 
 
@@ -2485,9 +1644,7 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
 		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
-	// Обнуляем буферы G-Buffer
-	// Очищаем каждый G-Buffer и глубину
-	// Стало:
+	
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHs[] = {
 	CD3DX12_CPU_DESCRIPTOR_HANDLE(
 		mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
@@ -2504,23 +1661,24 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 		SwapChainBufferCount + 2, // Начинаем после SwapChain
 		mRtvDescriptorSize
 	) };
+
+	// sky color same as directional light color 
 	XMFLOAT4 c(mLights[0].Color.x, mLights[0].Color.y, mLights[0].Color.z,1);
 	XMVECTORF32 a;
 	a.v = XMLoadFloat4(&c);
 	for (int i = 0; i < 3; ++i)
 		mCommandList->ClearRenderTargetView(rtvHs[i], a, 0, nullptr);
 	mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
 	mCommandList->OMSetRenderTargets(3, rtvHs, true, &DepthStencilView());
 	
 	ID3D12DescriptorHeap* heaps[] = { mSrvDescriptorHeap.Get() /*для текстур*/ };
 	mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
 	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-
 	auto passCB = mCurrFrameResource->PassCB->Resource();
 	mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
 
 	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
-
 
 	D3D12_RESOURCE_BARRIER barrier[3] = {
 	CD3DX12_RESOURCE_BARRIER::Transition(mGBufferAlbedo.Get(),
@@ -2531,10 +1689,9 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
 	};
 	mCommandList->ResourceBarrier(3, barrier);
-	// ================================================
 	
-	// ===============LIGHTING PASS=====================
-
+	
+	// =========LIGHTING PASS=========
 	mCommandList->SetPipelineState(mPSOs["lighting"].Get());
 	
 	mCommandList->OMSetRenderTargets(1, &mSceneRtvHandle, true, &DepthStencilView());
@@ -2561,11 +1718,8 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	mCommandList->SetGraphicsRootConstantBufferView(3, mCurrFrameResource->PassCB->Resource()->GetGPUVirtualAddress()); //b0
 	mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-
-	
-	
 	UINT lightCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(LightConstants));
-	// draw light
+	// calculate and draw light
 	for (auto& light : mLights)
 	{
 		auto lightCB = mCurrFrameResource->LightCB->Resource();
@@ -2594,7 +1748,6 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 		}
 	}
 
-
 	// draw light shapes
 	mCommandList->SetPipelineState(mPSOs["lightingShapes"].Get());
 	for (auto& light : mLights)
@@ -2613,6 +1766,8 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 		
 	}
 	
+
+	// =========PARTICLES PASS=========
 	DrawParticles(mCommandList.Get());
 
 
@@ -2624,6 +1779,9 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	};
 	mCommandList->ResourceBarrier(3, revertBarrier);
 
+
+
+	// =========POST-PROCESS PASS=========
 	D3D12_RESOURCE_BARRIER presentBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
 		mSceneTexture.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	mCommandList->ResourceBarrier(1, &presentBarrier);
@@ -2633,8 +1791,6 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::CornflowerBlue, 0, nullptr); // Clear back buffer
 
 	mCommandList->SetGraphicsRootSignature(mPostProcessRootSignature.Get());
-	// Descriptor heaps should already be set if mSrvDescriptorHeap is the one used by mPostProcessRootSignature
-	// mCommandList->SetDescriptorHeaps(1, mSrvDescriptorHeap.GetAddressOf()); // Ensure it's set
 
 	mCommandList->SetGraphicsRootDescriptorTable(0, mSceneSrvHandle); // Bind mSceneTexture SRV to t0
 	mCommandList->SetGraphicsRootConstantBufferView(1, mChromaticAberrationCB->Resource()->GetGPUVirtualAddress()); // Bind CB to b0
@@ -2642,6 +1798,7 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 	mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	mCommandList->DrawInstanced(3, 1, 0, 0); // Draw full-screen triangle
 
+	// =========IMGUI PASS=========
 	ImGui::Render();
 	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
 
