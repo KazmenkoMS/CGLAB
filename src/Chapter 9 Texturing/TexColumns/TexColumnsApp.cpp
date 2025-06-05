@@ -64,11 +64,11 @@ bool TexColumnsApp::Initialize()
 {
 	// Создаем консольное окно.
 	AllocConsole();
-
+	FILE* stream;
 	// Перенаправляем стандартные потоки.
-	freopen("CONIN$", "r", stdin);
-	freopen("CONOUT$", "w", stdout);
-	freopen("CONOUT$", "w", stderr);
+	freopen_s(&stream,"CONIN$", "r", stdin);
+	freopen_s(&stream,"CONOUT$", "w", stdout);
+	freopen_s(&stream,"CONOUT$", "w", stderr);
 
 	cam.SetPosition(0, 3, 10);
 	cam.RotateY(MathHelper::Pi);
@@ -217,7 +217,7 @@ void TexColumnsApp::OnResize()
 	BuildDescriptorHeaps();
 
     // The window resized, so update the aspect ratio and recompute the projection matrix.
-    XMMATRIX P = XMMatrixPerspectiveFovLH(0.4*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+    XMMATRIX P = XMMatrixPerspectiveFovLH(0.4f*MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
     XMStoreFloat4x4(&mProj, P);
 
 
@@ -328,11 +328,11 @@ void TexColumnsApp::OnKeyPressed(const GameTimer& gt, WPARAM key)
 {
 	if (GET_WHEEL_DELTA_WPARAM(key) > 0 && !ImGui::GetIO().WantCaptureMouse)
 	{
-		cam.IncreaseSpeed(0.05);
+		cam.IncreaseSpeed(0.05f);
 	}
 	else if (GET_WHEEL_DELTA_WPARAM(key) < 0 && !ImGui::GetIO().WantCaptureMouse)
 	{
-		cam.IncreaseSpeed(-0.05);
+		cam.IncreaseSpeed(-0.05f);
 	}
 	switch (key)
 	{
@@ -445,7 +445,7 @@ void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
 		if (l.type == 0)
 		{
 			//l.Color = mLights[0].Color; // ambient light equals directional;
-			std::string s = "\Ambient Light " + std::to_string(lId);
+			std::string s = "\nAmbient Light " + std::to_string(lId);
 			ImGui::PushID(++imguiID);
 			ImGui::Text(s.c_str());
 			ImGui::DragFloat("Strength", (float*)&l.Strength,0.02f);
@@ -873,7 +873,7 @@ void TexColumnsApp::BuildDescriptorHeaps()
 {
 	// ========= TEXTURES SRV's=========
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = mTextures.size() + 3 + mLights.size() + 1;
+	srvHeapDesc.NumDescriptors = UINT(mTextures.size() + 3 + mLights.size() + 1);
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -939,13 +939,13 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	int maxShadowSrvIndex = 0;
 	for (const auto& light : mLights) {
 		if ((light.type == 2 || light.type == 3) && light.CastsShadows) { 
-			if (light.ShadowMapSrvHeapIndex > maxShadowSrvIndex) {
+			if (light.ShadowMapSrvHeapIndex > (UINT)maxShadowSrvIndex) {
 				maxShadowSrvIndex = light.ShadowMapSrvHeapIndex;
 			}
 		}
 	}
 
-	mSceneSrvHeapIndex = (maxShadowSrvIndex == -1) ? (mTextures.size() + 3) : (maxShadowSrvIndex + 1);
+	mSceneSrvHeapIndex = (maxShadowSrvIndex == -1) ? UINT(mTextures.size() + 3) : UINT(maxShadowSrvIndex + 1);
 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE sceneTexCpuHandle(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 	sceneTexCpuHandle.Offset(mSceneSrvHeapIndex, mCbvSrvDescriptorSize);
@@ -1049,7 +1049,7 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 	unsigned int nMeshes = scene->mNumMeshes;
 	ObjectsMeshCount[name] = nMeshes;
 	
-	for (int i = 0;i < scene->mNumMeshes;i++)
+	for (unsigned int i = 0;i < scene->mNumMeshes;i++)
 	{
 		GeometryGenerator::MeshData meshData;
 		aiMesh* mesh = scene->mMeshes[i];
@@ -1120,7 +1120,7 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 		// Если требуется, можно выполнить дополнительные операции, например, нормализацию, вычисление тангенсов и т.д.
 		meshDatas.push_back(meshData);
 	}
-	for (int k = 0;k < scene->mNumMaterials;k++)
+	for (unsigned int k = 0;k < scene->mNumMaterials;k++)
 	{
 		aiString texPath;
 		scene->mMaterials[k]->GetTexture(aiTextureType_DIFFUSE, 0, &texPath);
@@ -1136,16 +1136,16 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 	}
 
 	UINT totalMeshSize = 0;
-	UINT k = vertices.size();
+	UINT k = (UINT)vertices.size();
 	std::vector<std::pair<GeometryGenerator::MeshData,SubmeshGeometry>>meshSubmeshes;
 	for (auto mesh : meshDatas)
 	{
 		meshVertexOffset = meshVertexOffset + prevVertSize;
-		prevVertSize = mesh.Vertices.size();
-		totalMeshSize += mesh.Vertices.size();
+		prevVertSize = (UINT)mesh.Vertices.size();
+		totalMeshSize += (UINT)mesh.Vertices.size();
 
 		meshIndexOffset = meshIndexOffset + prevIndSize;
-		prevIndSize = mesh.Indices32.size();
+		prevIndSize = (UINT)mesh.Indices32.size();
 		SubmeshGeometry meshSubmesh;
 		meshSubmesh.IndexCount = (UINT)mesh.Indices32.size();
 		meshSubmesh.StartIndexLocation = meshIndexOffset;
@@ -1496,7 +1496,7 @@ void TexColumnsApp::BuildMaterials()
 }
 void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMFLOAT3 Scale, XMFLOAT3 Rotation, XMFLOAT3 Position)
 {
-	for (int i = 0;i < ObjectsMeshCount[meshname];i++)
+	for (unsigned int i = 0;i < ObjectsMeshCount[meshname];i++)
 	{
 		auto rItem = std::make_unique<RenderItem>();
 		std::string textureFile;
@@ -1513,7 +1513,7 @@ void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshna
 		rItem->Position = Position;
 		rItem->RotationAngle = Rotation;
 		rItem->Scale = Scale;
-		rItem->ObjCBIndex = mAllRitems.size();
+		rItem->ObjCBIndex = (UINT)mAllRitems.size();
 		rItem->Geo = mGeometries["shapeGeo"].get();
 		rItem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		std::string matname = rItem->Geo->MultiDrawArgs[meshname][i].first.matName;
@@ -1546,7 +1546,7 @@ void TexColumnsApp::BuildRenderItems()
 	boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
 	mAllRitems.push_back(std::move(boxRitem));*/
 
-	RenderCustomMesh("building", "sponza", "", XMFLOAT3(0.07, 0.07, 0.07), XMFLOAT3(0, 3.14 / 2, 0), XMFLOAT3(0, 0, 0));
+	RenderCustomMesh("building", "sponza", "", XMFLOAT3(0.07f, 0.07f, 0.07f), XMFLOAT3(0.0f, 3.14f / 2.0f, 0.0f), XMFLOAT3(0.0f, 0.0f, 0.0f));
 	//RenderCustomMesh("nigga", "negr", "NiggaMat", XMFLOAT3(3, 3, 3), XMFLOAT3(0, 3.14, 0), XMFLOAT3(0, 3, 0));
 	//RenderCustomMesh("nigga2", "negr", "NiggaMat", XMFLOAT3(3, 3, 3), XMFLOAT3(0, -3.14 / 2, 0), XMFLOAT3(-10, 3, 30));
 	//RenderCustomMesh("eyeL", "left", "eye", XMFLOAT3(3, 3, 3), XMFLOAT3(0, 3.14, 0), XMFLOAT3());
@@ -1569,8 +1569,6 @@ void TexColumnsApp::BuildRenderItems()
 
 void TexColumnsApp::DrawSceneToShadowMap()
 {
-	
-
 	UINT shadowCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassShadowConstants));
 	for (auto light : mLights)
 	{
@@ -1707,11 +1705,11 @@ void TexColumnsApp::DeferredDraw(const GameTimer& gt)
 
 
 	CD3DX12_GPU_DESCRIPTOR_HANDLE positionHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	positionHandle.Offset(mTextures.size() + 0, mCbvSrvDescriptorSize);
+	positionHandle.Offset((int)mTextures.size() + 0, mCbvSrvDescriptorSize);
 	CD3DX12_GPU_DESCRIPTOR_HANDLE normalHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	normalHandle.Offset(mTextures.size() + 1, mCbvSrvDescriptorSize);
+	normalHandle.Offset((int)mTextures.size() + 1, mCbvSrvDescriptorSize);
 	CD3DX12_GPU_DESCRIPTOR_HANDLE albedoHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	albedoHandle.Offset(mTextures.size() + 2, mCbvSrvDescriptorSize);
+	albedoHandle.Offset((int)mTextures.size() + 2, mCbvSrvDescriptorSize);
 	mCommandList->SetGraphicsRootDescriptorTable(0, positionHandle); // t0
 	mCommandList->SetGraphicsRootDescriptorTable(1, normalHandle); // t1
 	mCommandList->SetGraphicsRootDescriptorTable(2, albedoHandle); // t2

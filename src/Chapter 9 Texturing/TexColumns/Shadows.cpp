@@ -90,7 +90,7 @@ void TexColumnsApp::BuildShadowMapViews()
 			light.ShadowMapDsvHandle.Offset(i, mDsvDescriptorSize); // Use the stored index
 			md3dDevice->CreateDepthStencilView(light.ShadowMap.Get(), &dsvDesc, light.ShadowMapDsvHandle);
 
-			light.ShadowMapSrvHeapIndex = mTextures.size() + 3 + i;
+			light.ShadowMapSrvHeapIndex = (UINT)mTextures.size() + 3 + i;
 			i++;
 		}
 	}

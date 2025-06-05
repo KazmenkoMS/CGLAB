@@ -4,11 +4,11 @@ void TexColumnsApp::BuildLights()
 {
 	// directional
 	Light dir;
-	dir.LightCBIndex = mLights.size();
+	dir.LightCBIndex = (int)mLights.size();
 	dir.Position = { 0,300,0 };
 	dir.Direction = { 0, -1, 0 };
 	dir.Color = { 1,1,1 };
-	dir.Strength = 0.8;
+	dir.Strength = 0.8f;
 	dir.type = 2;
 	dir.LightUp = XMVectorSet(0, 0, -1, 0);
 	auto& world = XMMatrixScaling(1000, 1000, 1000);
@@ -16,10 +16,10 @@ void TexColumnsApp::BuildLights()
 	mLights.push_back(dir);
 
 	Light ambient;
-	ambient.LightCBIndex = mLights.size();
+	ambient.LightCBIndex = (int)mLights.size();
 	ambient.Position = { 3.0f, 0.0f, 3.0f };
 	ambient.Color = { 0,0,0 }; // need only x
-	ambient.Strength = 0.4; // need only x
+	ambient.Strength = 0.4f; // need only x
 	ambient.type = 0;
 	XMStoreFloat4x4(&ambient.gWorld, XMMatrixTranspose(XMMatrixTranslation(0, 0, 0) * XMMatrixScaling(1000, 1000, 1000)));
 	mLights.push_back(ambient);
@@ -99,7 +99,7 @@ void TexColumnsApp::BuildLightingRootSignature()
 void TexColumnsApp::CreatePointLight(XMFLOAT3 pos, XMFLOAT3 color, float faloff_start, float faloff_end, float strength)
 {
 	Light light;
-	light.LightCBIndex = mLights.size();
+	light.LightCBIndex = (int)mLights.size();
 
 	light.Position = pos;
 	light.Color = color;
@@ -113,7 +113,7 @@ void TexColumnsApp::CreatePointLight(XMFLOAT3 pos, XMFLOAT3 color, float faloff_
 void TexColumnsApp::CreateSpotLight(XMFLOAT3 pos, XMFLOAT3 rot, XMFLOAT3 color, float faloff_start, float faloff_end, float strength, float spotpower)
 {
 	Light light;
-	light.LightCBIndex = mLights.size();
+	light.LightCBIndex = (int)mLights.size();
 
 	light.Position = pos;
 	light.Color = color;
