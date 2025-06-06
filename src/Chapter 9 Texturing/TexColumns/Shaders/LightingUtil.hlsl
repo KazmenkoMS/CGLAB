@@ -5,7 +5,7 @@
 //***************************************************************************************
 
 #define MaxLights 16
-
+#define PI 3.14
 struct Light
 {
     float3 Strength;
@@ -20,8 +20,35 @@ struct Material
 {
     float4 DiffuseAlbedo;
     float3 FresnelR0;
-    float Shininess;
+    float Metallic;
+    float Roughness;
+    float AO;
+    
 };
+// GGX NDF (распределение нормалей)
+float GGX(float NdotH, float roughness)
+{
+    float alpha = roughness * roughness;
+    float alpha2 = alpha * alpha;
+    float denom = (NdotH * NdotH) * (alpha2 - 1.0) + 1.0;
+    return alpha2 / (PI * denom * denom);
+}
+
+// Френель (Schlick)
+float3 FresnelSchlick(float cosTheta, float3 F0)
+{
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+// Геометрия (Smith)
+float GeometrySmith(float NdotV, float NdotL, float roughness)
+{
+    float r = (roughness + 1.0);
+    float k = (r * r) / 8.0;
+    float ggx1 = NdotV / (NdotV * (1.0 - k) + k);
+    float ggx2 = NdotL / (NdotL * (1.0 - k) + k);
+    return ggx1 * ggx2;
+}
 
 float CalcAttenuation(float d, float falloffStart, float falloffEnd)
 {
@@ -29,33 +56,23 @@ float CalcAttenuation(float d, float falloffStart, float falloffEnd)
     return saturate((falloffEnd-d) / (falloffEnd - falloffStart));
 }
 
-// Schlick gives an approximation to Fresnel reflectance (see pg. 233 "Real-Time Rendering 3rd Ed.").
-// R0 = ( (n-1)/(n+1) )^2, where n is the index of refraction.
-float3 SchlickFresnel(float3 R0, float3 normal, float3 lightVec)
-{
-    float cosIncidentAngle = saturate(dot(normal, lightVec));
-
-    float f0 = 1.0f - cosIncidentAngle;
-    float3 reflectPercent = R0 + (1.0f - R0)*(f0*f0*f0*f0*f0);
-
-    return reflectPercent;
-}
 
 float3 BlinnPhong(float3 lightStrength, float3 lightVec, float3 normal, float3 toEye, Material mat)
 {
-    const float m = mat.Shininess * 256.0f;
     float3 halfVec = normalize(toEye + lightVec);
+    float NdotL = max(dot(normal, lightVec), 0.0);
+    float NdotV = max(dot(normal, toEye), 0.0);
+    float NdotH = max(dot(normal, halfVec), 0.0);
+    float HdotV = max(dot(halfVec, toEye), 0.0);
+    // BRDF
+    float3 F = FresnelSchlick(HdotV, mat.FresnelR0);
+    float D = GGX(NdotH, mat.Roughness);
+    float G = GeometrySmith(NdotV, NdotL, mat.Roughness);
 
-    float roughnessFactor = (m + 8.0f)*pow(max(dot(halfVec, normal), 0.0f), m) / 8.0f;
-    float3 fresnelFactor = SchlickFresnel(mat.FresnelR0, halfVec, lightVec);
-
-    float3 specAlbedo = fresnelFactor*roughnessFactor;
-
-    // Our spec formula goes outside [0,1] range, but we are 
-    // doing LDR rendering.  So scale it down a bit.
-    specAlbedo = specAlbedo / (specAlbedo + 1.0f);
-
-    return (mat.DiffuseAlbedo.rgb + specAlbedo) * lightStrength;
+    float3 specularBRDF = (D * F * G) / max(4.0 * NdotV * NdotL, 0.001);
+    float3 diffuseBRDF = (1.0 - mat.Metallic) * mat.DiffuseAlbedo / PI ;
+    
+    return (diffuseBRDF + specularBRDF) * lightStrength * mat.AO;
 }
 
 //---------------------------------------------------------------------------------------

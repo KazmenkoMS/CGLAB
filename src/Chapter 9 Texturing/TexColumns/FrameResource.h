@@ -32,9 +32,9 @@ struct PassConstants
 
     float gTessFactorMin = 1.f; // Минимальный фактор тесселяции ребер
     float gTessFactorMax = 10.f; // Максимальный фактор тесселяции ребер
-    int gTessLevel = 1; // Фактор тесселяции внутри патча (можно тоже сделать динамическим)
+    int gTessLevel = 64; // Фактор тесселяции внутри патча (можно тоже сделать динамическим)
     float gMaxTessDistance = 100.f; // Расстояние, на котором достигается мин. тесселяция
-    float gDisplacementScale = 2.f; // Масштаб смещения
+    float gDisplacementScale = 1.2f; // Масштаб смещения
     int fixTessLevel = true;
 
     // Indices [0, NUM_DIR_LIGHTS) are directional lights;
