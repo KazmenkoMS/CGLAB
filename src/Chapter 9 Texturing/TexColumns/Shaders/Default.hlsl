@@ -162,8 +162,8 @@ VertexOutHSIn VS(VertexIn vin)
     // Для нормали/касательной используем gWorld (предполагая uniform scale).
     // Если есть non-uniform scale, нужна инверсно-транспонированная матрица мира (часто (float3x3)gInvWorld).
     // Но для простоты пока используем gWorld.
-    vout.NormalW = normalize(mul(vin.NormalL, (float3x3) gWorld));
-    vout.TanW = normalize(mul(vin.Tan, (float3x3) gWorld));
+    vout.NormalW = normalize(mul(vin.NormalL, (float3x3) gInvWorld));
+    vout.TanW = normalize(mul(vin.Tan, (float3x3) gInvWorld));
 
     // Трансформируем текстурные координаты (с учетом трансформаций объекта и материала)
     float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);

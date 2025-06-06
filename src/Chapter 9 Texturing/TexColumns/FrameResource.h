@@ -29,7 +29,7 @@ struct PassConstants
     float DeltaTime = 0.0f;
     DirectX::XMFLOAT4 AmbientLight = { 0.0f, 0.0f, 0.0f, 1.0f };
     Light Lights[MaxLights];
-
+   
     float gTessFactorMin = 1.f; // ћинимальный фактор тессел€ции ребер
     float gTessFactorMax = 10.f; // ћаксимальный фактор тессел€ции ребер
     int gTessLevel = 64; // ‘актор тессел€ции внутри патча (можно тоже сделать динамическим)

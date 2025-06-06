@@ -210,6 +210,7 @@ bool TexColumnsApp::Initialize()
 	// Создаем консольное окно.
 	AllocConsole();
 	mMainPassCB.Lights[0].Strength = { 5,4,3 };
+	mMainPassCB.Lights[0].Direction = { -1,-0.5,0 };
 	mMainPassCB.Lights[1].Strength = { 0,0,0 };
 	// Перенаправляем стандартные потоки.
 	freopen("CONIN$", "r", stdin);
