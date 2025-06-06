@@ -96,7 +96,7 @@ private:
     void BuildShapeGeometry();
     void BuildPSOs();
     void BuildFrameResources();
-	void CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, int _SRVDispIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness);
+	void CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, int _SRVDispIndex, int _SRVMetalIndex, int _SRVRoughIndex, int _SRVAOIndex, float DispValue, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness);
     void BuildMaterials();
 	void RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation);
 	void BuildCustomMeshGeometry(std::string name, UINT& meshVertexOffset, UINT& meshIndexOffset, UINT& prevVertSize, UINT& prevIndSize, std::vector<Vertex>& vertices, std::vector<std::uint16_t>& indices, MeshGeometry* Geo);
@@ -209,13 +209,14 @@ bool TexColumnsApp::Initialize()
 {
 	// Создаем консольное окно.
 	AllocConsole();
-
+	mMainPassCB.Lights[0].Strength = { 5,4,3 };
+	mMainPassCB.Lights[1].Strength = { 0,0,0 };
 	// Перенаправляем стандартные потоки.
 	freopen("CONIN$", "r", stdin);
 	freopen("CONOUT$", "w", stdout);
 	freopen("CONOUT$", "w", stderr);
 
-	cam.SetPosition(-10, 5, 40);
+	cam.SetPosition(5, 25, 40);
 	cam.RotateY(MathHelper::Pi);
     if(!D3DApp::Initialize())
         return false;
@@ -363,9 +364,9 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	UpdateMainPassCB(gt);
 	AnimateMaterials(gt);
 	UpdateObjectCBs(gt);
+	ImGui::End();
 	UpdateMaterialCBs(gt);
 
-	ImGui::End();
 }
 
 void TexColumnsApp::Draw(const GameTimer& gt)
@@ -405,7 +406,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
 	auto passCB = mCurrFrameResource->PassCB->Resource();
-	mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(7, passCB->GetGPUVirtualAddress());
 
 	
 	
@@ -589,12 +590,19 @@ void TexColumnsApp::UpdateObjectCBs(const GameTimer& gt)
 void TexColumnsApp::UpdateMaterialCBs(const GameTimer& gt)
 {
 	auto currMaterialCB = mCurrFrameResource->MaterialCB.get();
+	ImGui::Begin("Material Settings");
+	int i = 0;
 	for(auto& e : mMaterials)
 	{
-		
 		// Only update the cbuffer data if the constants have changed.  If the cbuffer
 		// data changes, it needs to be updated for each FrameResource.
 		Material* mat = e.second.get();
+		ImGui::PushID(i++);
+		ImGui::Text("Material %d",i);
+		ImGui::DragFloat("Disp Value", &mat->DispValue, 0.1f, 0, 30);
+		ImGui::DragFloat("Fresnel Value",&mat->FresnelR0.x, 0.01f, 0, 30);
+		ImGui::PopID();
+		mat->NumFramesDirty = gNumFrameResources;
 		if(mat->NumFramesDirty > 0)
 		{
 			XMMATRIX matTransform = XMLoadFloat4x4(&mat->MatTransform);
@@ -602,7 +610,7 @@ void TexColumnsApp::UpdateMaterialCBs(const GameTimer& gt)
 			MaterialConstants matConstants;
 			matConstants.DiffuseAlbedo = mat->DiffuseAlbedo;
 			matConstants.FresnelR0 = mat->FresnelR0;
-			matConstants.Roughness = mat->Roughness;
+			matConstants.DispValue = mat->DispValue;
 			XMStoreFloat4x4(&matConstants.MatTransform, XMMatrixTranspose(matTransform));
 
 			currMaterialCB->CopyData(mat->MatCBIndex, matConstants);
@@ -610,7 +618,9 @@ void TexColumnsApp::UpdateMaterialCBs(const GameTimer& gt)
 			// Next FrameResource need to be updated too.
 			mat->NumFramesDirty--;
 		}
+		
 	}
+	ImGui::End();
 }
 
 void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
@@ -644,33 +654,33 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	currPassCB->CopyData(0, mMainPassCB);
 
 	// Controls for light settings
-	ImGui::PushID(0);
 	ImGui::Text("Displacement settings");
 	ImGui::SliderFloat("Disp Value", (float*)&mMainPassCB.gDisplacementScale, 0.f, 5.f);
-	ImGui::PopID();
 
-	ImGui::PushID(1);
-	ImGui::Text("Light settings");
-	ImGui::SliderFloat3("Position", (float*)&mMainPassCB.Lights[0].Position, -20.f, 20.f);
-	static float strength = mMainPassCB.Lights[0].Strength.x;
-	ImGui::SliderFloat("Strength", (float*)&strength, 0.f, 3.f);
-	mMainPassCB.Lights[0].Strength = XMFLOAT3(strength, strength, strength);
-	ImGui::SliderFloat("FallofEnd", (float*)&mMainPassCB.Lights[0].FalloffEnd, 0.f, 100.f);
-	ImGui::PopID();
 
-	ImGui::PushID(2);
+	ImGui::Text("Light settings\n");
+	ImGui::Text("Point Light\n");
+	ImGui::DragFloat3("Position", (float*)&mMainPassCB.Lights[1].Position,0.1f, -200.f, 200.f);
+	static float strength = mMainPassCB.Lights[1].Strength.x;
+	ImGui::DragFloat("Strength ##0", (float*)&strength, 0.1f, 0.f, 30.f);
+	mMainPassCB.Lights[1].Strength = XMFLOAT3(strength, strength, strength);
+	ImGui::SliderFloat("FallofEnd", (float*)&mMainPassCB.Lights[1].FalloffEnd, 0.f, 100.f);
+	ImGui::Text("Directional Light\n");
+	ImGui::DragFloat3("Direction", (float*)&mMainPassCB.Lights[0].Direction, 0.1f, -1.f, 1.f);
+	static float strength2 = mMainPassCB.Lights[0].Strength.x;
+	ImGui::DragFloat("Strength ##1", (float*)&strength2, 0.1f, 0.f, 30.f);
+	mMainPassCB.Lights[0].Strength = XMFLOAT3(strength2, strength2, strength2);
+
 	ImGui::Text("Tesselation settings");
 	ImGui::SliderFloat("Tesselation Max Value", (float*)&mMainPassCB.gTessFactorMax,10.f, 64.f);
 	ImGui::SliderInt("Cur Tess Value", &mMainPassCB.gTessLevel,1, 64);
 	ImGui::SliderFloat("Tesselation Radius Value", (float*)&mMainPassCB.gMaxTessDistance,20.f, 100.f);
-	ImGui::PopID();
+
 	
-	ImGui::PushID(3);
 	ImGui::Text("Other settings");
 	ImGui::Checkbox("FillMode Solid", &isFillModeSolid);
 	ImGui::Checkbox("Fix Tess Level", (bool*) & mMainPassCB.fixTessLevel);
 
-	ImGui::PopID();
 
 }
 
@@ -713,22 +723,33 @@ void TexColumnsApp::BuildRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE dispMap;
 	dispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);  // Dispmap в регистре t2
 
-    // Root parameter can be a table, root descriptor or root constants.
-    CD3DX12_ROOT_PARAMETER slotRootParameter[6];
+	CD3DX12_DESCRIPTOR_RANGE metalMap;
+	metalMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);  // Dispmap в регистре t3
 
-	// Perfomance TIP: Order from most frequent to least frequent.
+	CD3DX12_DESCRIPTOR_RANGE roughMap;
+	roughMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);  // Dispmap в регистре t4
+
+	CD3DX12_DESCRIPTOR_RANGE aoMap;
+	aoMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5);  // Dispmap в регистре t5
+
+    // Root parameter can be a table, root descriptor or root constants.
+    CD3DX12_ROOT_PARAMETER slotRootParameter[9];
+
 	slotRootParameter[0].InitAsDescriptorTable(1, &diffuseRange, D3D12_SHADER_VISIBILITY_ALL);
 	slotRootParameter[1].InitAsDescriptorTable(1, &normalRange, D3D12_SHADER_VISIBILITY_ALL);
 	slotRootParameter[2].InitAsDescriptorTable(1, &dispMap, D3D12_SHADER_VISIBILITY_ALL);
+	slotRootParameter[3].InitAsDescriptorTable(1, &metalMap, D3D12_SHADER_VISIBILITY_ALL);
+	slotRootParameter[4].InitAsDescriptorTable(1, &roughMap, D3D12_SHADER_VISIBILITY_ALL);
+	slotRootParameter[5].InitAsDescriptorTable(1, &aoMap, D3D12_SHADER_VISIBILITY_ALL);
 
-    slotRootParameter[3].InitAsConstantBufferView(0); // register b0
-    slotRootParameter[4].InitAsConstantBufferView(1); // register b1
-    slotRootParameter[5].InitAsConstantBufferView(2); // register b2
+    slotRootParameter[6].InitAsConstantBufferView(0); // register b0
+    slotRootParameter[7].InitAsConstantBufferView(1); // register b1
+    slotRootParameter[8].InitAsConstantBufferView(2); // register b2
 
 	auto staticSamplers = GetStaticSamplers();
 
     // A root signature is an array of root parameters.
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(6, slotRootParameter,
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(9, slotRootParameter,
 		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -750,7 +771,7 @@ void TexColumnsApp::BuildRootSignature()
         serializedRootSig->GetBufferSize(),
         IID_PPV_ARGS(mRootSignature.GetAddressOf())));
 }
-void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, int _SRVDispIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness)
+void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, int _SRVDispIndex, int _SRVMetalIndex, int _SRVRoughIndex, int _SRVAOIndex, float DispValue, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness)
 {
 	
 	auto material = std::make_unique<Material>();
@@ -759,9 +780,12 @@ void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiff
 	material->DiffuseSrvHeapIndex = _SRVDiffIndex;
 	material->NormalSrvHeapIndex = _SRVNMapIndex;
 	material->DispSrvHeapIndex = _SRVDispIndex;
+	material->MetallicSrvHeapIndex = _SRVMetalIndex;
+	material->RoughnessSrvHeapIndex = _SRVRoughIndex;
+	material->AOSrvHeapIndex = _SRVAOIndex;
+	material->DispValue = DispValue;
 	material->DiffuseAlbedo = _DiffuseAlbedo;
 	material->FresnelR0 = _FresnelR0;
-	material->Roughness = _Roughness;
 	mMaterials[_name] = std::move(material);
 }
 void TexColumnsApp::BuildDescriptorHeaps()
@@ -770,7 +794,7 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	// Create the SRV heap.
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = mTextures.size();
+	srvHeapDesc.NumDescriptors = 1 + mTextures.size();
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -779,12 +803,14 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	// Fill out the heap with actual descriptors.
 	//
 	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+	hDescriptor.Offset(1,mCbvSrvDescriptorSize);
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	int offset = 0;
+	int offset = 1;
 	for (const auto& tex : mTextures) {
 		auto text = tex.second->Resource;
+		std::cout << tex.first.c_str() << " " << offset << "\n";
 		srvDesc.Format = text->GetDesc().Format;
 		srvDesc.Texture2D.MipLevels = text->GetDesc().MipLevels;
 		md3dDevice->CreateShaderResourceView(text.Get(), &srvDesc, hDescriptor);
@@ -919,8 +945,8 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 		std::string b = std::string(texPath.C_Str());
 		b = b.substr(0, b.length() - 4);
 		std::cout << "NORMAL: " << b << "\n";
-
-		CreateMaterial(scene->mMaterials[k]->GetName().C_Str(), k, TexOffsets[a], TexOffsets[b], TexOffsets[b], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+		// NOT CURRENTLY WORKING WITH PBR MATERIALS
+		//CreateMaterial(scene->mMaterials[k]->GetName().C_Str(), k, TexOffsets[a], TexOffsets[b], TexOffsets[b], _заполнитель_, _заполнитель_, _заполнитель_, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	}
 
 	UINT totalMeshSize = 0;
@@ -964,8 +990,8 @@ void TexColumnsApp::BuildShapeGeometry()
 {
     GeometryGenerator geoGen;
 	GeometryGenerator::MeshData box = geoGen.CreateBox(1.0f, 1.0f, 1.0f, 3);
-	GeometryGenerator::MeshData grid = geoGen.CreateGrid(30.0f, 30.0f, 10, 10);
-	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 20, 20);
+	GeometryGenerator::MeshData grid = geoGen.CreateGrid(30.0f, 30.0f, 100, 100);
+	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 30, 30);
 	GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
 
 	//
@@ -1062,12 +1088,12 @@ void TexColumnsApp::BuildShapeGeometry()
 
 	auto geo = std::make_unique<MeshGeometry>();
 	geo->Name = "shapeGeo";
-	BuildCustomMeshGeometry("sponza", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
+	/*BuildCustomMeshGeometry("sponza", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
 	BuildCustomMeshGeometry("negr", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
 	BuildCustomMeshGeometry("left", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
 	BuildCustomMeshGeometry("right", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
 	BuildCustomMeshGeometry("plane2", meshVertexOffset, meshIndexOffset, prevVertSize, prevIndSize, vertices, indices, geo.get());
-	
+	*/
 
 
 
@@ -1216,10 +1242,19 @@ void TexColumnsApp::BuildMaterials()
 	/*CreateMaterial("NiggaMat", 0, TexOffsets["textures/texture"], TexOffsets["textures/texture_nm"], _заполнитель_, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("eye", 0, TexOffsets["textures/eye"], TexOffsets["textures/eye_nm"], _заполнитель_, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("map", 0, TexOffsets["textures/HeightMap2"], TexOffsets["textures/HeightMap2"], _заполнитель_, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);*/
-	CreateMaterial("map2", 0, TexOffsets["textures/stone"], TexOffsets["textures/stone_nmap"], TexOffsets["textures/stone_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("bricks2", 0, TexOffsets["textures/redbrick_diff"], TexOffsets["textures/redbrick_nmap"], TexOffsets["textures/redbrick_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("PBR_mat_1", 0, TexOffsets["textures/PBR1_diff"], TexOffsets["textures/PBR1_norm"], TexOffsets["textures/PBR1_disp"],
+		TexOffsets["textures/PBR1_metal"], TexOffsets["textures/PBR1_rough"], TexOffsets["textures/PBR1_ao"], 2.0f, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("PBR_mat_2", 1, TexOffsets["textures/PBR2_diff"], TexOffsets["textures/PBR2_norm"], TexOffsets["textures/PBR2_disp"],
+		TexOffsets["textures/PBR2_metal"], TexOffsets["textures/PBR2_rough"], TexOffsets["textures/PBR2_ao"], 6.0f, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("PBR_mat_3", 2, TexOffsets["textures/PBR3_diff"], TexOffsets["textures/PBR3_norm"], TexOffsets["textures/PBR3_disp"],
+		TexOffsets["textures/PBR3_metal"], TexOffsets["textures/PBR3_rough"], TexOffsets["textures/PBR3_ao"], 1.0f, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("PBR_mat_4", 3, TexOffsets["textures/PBR4_diff"], TexOffsets["textures/PBR4_norm"], TexOffsets["textures/PBR4_disp"],
+		TexOffsets["textures/1pix"], TexOffsets["textures/PBR4_rough"], TexOffsets["textures/PBR4_ao"], .5f, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.15f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("PBR_mat_5", 4, TexOffsets["textures/PBR5_diff"], TexOffsets["textures/PBR5_norm"], TexOffsets["textures/PBR5_disp"],
+		TexOffsets["textures/1pix"], TexOffsets["textures/PBR5_rough"], TexOffsets["textures/PBR5_ao"], 1.0f, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.15f, 0.05f, 0.05f), 0.3f);
+	/*CreateMaterial("bricks2", 0, TexOffsets["textures/redbrick_diff"], TexOffsets["textures/redbrick_nmap"], TexOffsets["textures/redbrick_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("bricks3", 0, TexOffsets["textures/rock"], TexOffsets["textures/rock_nmap"], TexOffsets["textures/rock_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("rocks", 0, TexOffsets["textures/rocks"], TexOffsets["textures/rocks_nmap"], TexOffsets["textures/rocks_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	CreateMaterial("rocks", 0, TexOffsets["textures/rocks"], TexOffsets["textures/rocks_nmap"], TexOffsets["textures/rocks_disp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);*/
 	
 }
 void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation)
@@ -1254,10 +1289,10 @@ void TexColumnsApp::BuildRenderItems()
 {
 	auto boxRitem = std::make_unique<RenderItem>();
 	boxRitem->Name = "plane";
-	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(1.0f, 1.0f,1.0f) * XMMatrixTranslation(0.0f, -1.0f, 3.0f));
-	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1,1,1));
+	XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(25.0f, 25.0f,25.0f) * XMMatrixTranslation(0.0f, -25.0f, 3.0f));
+	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(4,4,4));
 	boxRitem->ObjCBIndex = 0;
-	boxRitem->Mat = mMaterials["map2"].get();
+	boxRitem->Mat = mMaterials["PBR_mat_1"].get();
 	boxRitem->Geo = mGeometries["shapeGeo"].get();
 	boxRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	boxRitem->IndexCount = boxRitem->Geo->DrawArgs["grid"].IndexCount;
@@ -1267,42 +1302,55 @@ void TexColumnsApp::BuildRenderItems()
 
 	auto box1Ritem = std::make_unique<RenderItem>();
 	box1Ritem->Name = "plane2";
-	XMStoreFloat4x4(&box1Ritem->World, XMMatrixScaling(1.0f, 1.0f, 1.0f) * XMMatrixTranslation(30.0f, -1.0f, 3.0f));
+	XMStoreFloat4x4(&box1Ritem->World, XMMatrixScaling(25.0f, 25.0f, 25.0f) * XMMatrixTranslation(30.0f, -1.0f, 3.0f));
 	XMStoreFloat4x4(&box1Ritem->TexTransform, XMMatrixScaling(1, 1, 1));
 	box1Ritem->ObjCBIndex = 1;
-	box1Ritem->Mat = mMaterials["bricks2"].get();
+	box1Ritem->Mat = mMaterials["PBR_mat_2"].get();
 	box1Ritem->Geo = mGeometries["shapeGeo"].get();
 	box1Ritem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	box1Ritem->IndexCount = box1Ritem->Geo->DrawArgs["grid"].IndexCount;
-	box1Ritem->StartIndexLocation = box1Ritem->Geo->DrawArgs["grid"].StartIndexLocation;
-	box1Ritem->BaseVertexLocation = box1Ritem->Geo->DrawArgs["grid"].BaseVertexLocation;
+	box1Ritem->IndexCount = box1Ritem->Geo->DrawArgs["sphere"].IndexCount;
+	box1Ritem->StartIndexLocation = box1Ritem->Geo->DrawArgs["sphere"].StartIndexLocation;
+	box1Ritem->BaseVertexLocation = box1Ritem->Geo->DrawArgs["sphere"].BaseVertexLocation;
 	mAllRitems.push_back(std::move(box1Ritem));
 
 	auto box2Ritem = std::make_unique<RenderItem>();
 	box2Ritem->Name = "plane3";
-	XMStoreFloat4x4(&box2Ritem->World, XMMatrixScaling(1.0f, 1.0f, 1.0f) * XMMatrixTranslation(30.0f, -1.0f, 33.0f));
+	XMStoreFloat4x4(&box2Ritem->World, XMMatrixScaling(25.0f, 25.0f, 25.0f) * XMMatrixTranslation(30.0f, -1.0f, 33.0f));
 	XMStoreFloat4x4(&box2Ritem->TexTransform, XMMatrixScaling(1, 1, 1));
 	box2Ritem->ObjCBIndex = 2;
-	box2Ritem->Mat = mMaterials["bricks3"].get();
+	box2Ritem->Mat = mMaterials["PBR_mat_3"].get();
 	box2Ritem->Geo = mGeometries["shapeGeo"].get();
 	box2Ritem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	box2Ritem->IndexCount = box2Ritem->Geo->DrawArgs["grid"].IndexCount;
-	box2Ritem->StartIndexLocation = box2Ritem->Geo->DrawArgs["grid"].StartIndexLocation;
-	box2Ritem->BaseVertexLocation = box2Ritem->Geo->DrawArgs["grid"].BaseVertexLocation;
+	box2Ritem->IndexCount = box2Ritem->Geo->DrawArgs["sphere"].IndexCount;
+	box2Ritem->StartIndexLocation = box2Ritem->Geo->DrawArgs["sphere"].StartIndexLocation;
+	box2Ritem->BaseVertexLocation = box2Ritem->Geo->DrawArgs["sphere"].BaseVertexLocation;
 	mAllRitems.push_back(std::move(box2Ritem));
 
 	auto box3Ritem = std::make_unique<RenderItem>();
 	box3Ritem->Name = "plane4";
-	XMStoreFloat4x4(&box3Ritem->World, XMMatrixScaling(1.0f, 1.0f, 1.0f) * XMMatrixTranslation(0.0f, -1.0f, 33.0f));
-	XMStoreFloat4x4(&box3Ritem->TexTransform, XMMatrixScaling(1, 1, 1));
+	XMStoreFloat4x4(&box3Ritem->World, XMMatrixScaling(25.0f, 25.0f, 25.0f) * XMMatrixTranslation(0.0f, -1.0f, 33.0f));
+	XMStoreFloat4x4(&box3Ritem->TexTransform, XMMatrixScaling(3, 3, 3));
 	box3Ritem->ObjCBIndex = 3;
-	box3Ritem->Mat = mMaterials["rocks"].get();
+	box3Ritem->Mat = mMaterials["PBR_mat_4"].get();
 	box3Ritem->Geo = mGeometries["shapeGeo"].get();
 	box3Ritem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	box3Ritem->IndexCount = box3Ritem->Geo->DrawArgs["grid"].IndexCount;
-	box3Ritem->StartIndexLocation = box3Ritem->Geo->DrawArgs["grid"].StartIndexLocation;
-	box3Ritem->BaseVertexLocation = box3Ritem->Geo->DrawArgs["grid"].BaseVertexLocation;
+	box3Ritem->IndexCount = box3Ritem->Geo->DrawArgs["sphere"].IndexCount;
+	box3Ritem->StartIndexLocation = box3Ritem->Geo->DrawArgs["sphere"].StartIndexLocation;
+	box3Ritem->BaseVertexLocation = box3Ritem->Geo->DrawArgs["sphere"].BaseVertexLocation;
 	mAllRitems.push_back(std::move(box3Ritem));
+
+	auto box4Ritem = std::make_unique<RenderItem>();
+	box4Ritem->Name = "plane";
+	XMStoreFloat4x4(&box4Ritem->World, XMMatrixScaling(25.0f, 25.0f, 25.0f) * XMMatrixTranslation(0.0f, -1.0f, 3.0f));
+	XMStoreFloat4x4(&box4Ritem->TexTransform, XMMatrixScaling(2,2,2));
+	box4Ritem->ObjCBIndex = 4;
+	box4Ritem->Mat = mMaterials["PBR_mat_5"].get();
+	box4Ritem->Geo = mGeometries["shapeGeo"].get();
+	box4Ritem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	box4Ritem->IndexCount = box4Ritem->Geo->DrawArgs["sphere"].IndexCount;
+	box4Ritem->StartIndexLocation = box4Ritem->Geo->DrawArgs["sphere"].StartIndexLocation;
+	box4Ritem->BaseVertexLocation = box4Ritem->Geo->DrawArgs["sphere"].BaseVertexLocation;
+	mAllRitems.push_back(std::move(box4Ritem));
 
 	//RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0));
 /*	RenderCustomMesh("nigga", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(0, 3, 0));
@@ -1340,24 +1388,32 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 		CD3DX12_GPU_DESCRIPTOR_HANDLE diffuseHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 		diffuseHandle.Offset(ri->Mat->DiffuseSrvHeapIndex, mCbvSrvDescriptorSize);
 		cmdList->SetGraphicsRootDescriptorTable(0, diffuseHandle);
+
 		CD3DX12_GPU_DESCRIPTOR_HANDLE normalHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 		normalHandle.Offset(ri->Mat->NormalSrvHeapIndex, mCbvSrvDescriptorSize);
 		cmdList->SetGraphicsRootDescriptorTable(1, normalHandle);
+
 		CD3DX12_GPU_DESCRIPTOR_HANDLE dispHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 		dispHandle.Offset(ri->Mat->DispSrvHeapIndex, mCbvSrvDescriptorSize);
 		cmdList->SetGraphicsRootDescriptorTable(2, dispHandle);
 
+		CD3DX12_GPU_DESCRIPTOR_HANDLE metalHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+		metalHandle.Offset(ri->Mat->MetallicSrvHeapIndex, mCbvSrvDescriptorSize);
+		cmdList->SetGraphicsRootDescriptorTable(3, metalHandle);
 
-		//// Получаем дескриптор для нормальной карты по её оффсету.
-		//CD3DX12_GPU_DESCRIPTOR_HANDLE normalHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-		//normalHandle.Offset(ri->Mat->NormalSrvHeapIndex, mCbvSrvDescriptorSize);
-		//cmdList->SetGraphicsRootDescriptorTable(1, normalHandle);
+		CD3DX12_GPU_DESCRIPTOR_HANDLE roughHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+		roughHandle.Offset(ri->Mat->RoughnessSrvHeapIndex, mCbvSrvDescriptorSize);
+		cmdList->SetGraphicsRootDescriptorTable(4, roughHandle);
+
+		CD3DX12_GPU_DESCRIPTOR_HANDLE AOHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+		AOHandle.Offset(ri->Mat->AOSrvHeapIndex, mCbvSrvDescriptorSize);
+		cmdList->SetGraphicsRootDescriptorTable(5, AOHandle);
 
         D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex*objCBByteSize;
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex*matCBByteSize;
 
-        cmdList->SetGraphicsRootConstantBufferView(3, objCBAddress);
-        cmdList->SetGraphicsRootConstantBufferView(5, matCBAddress);
+        cmdList->SetGraphicsRootConstantBufferView(6, objCBAddress);
+        cmdList->SetGraphicsRootConstantBufferView(8, matCBAddress);
 
         cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
     }

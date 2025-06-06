@@ -4,7 +4,7 @@
 
 // Defaults for number of lights.
 #ifndef NUM_DIR_LIGHTS
-    #define NUM_DIR_LIGHTS 0
+    #define NUM_DIR_LIGHTS 1
 #endif
 
 #ifndef NUM_POINT_LIGHTS
@@ -21,6 +21,9 @@
 Texture2D    gDiffuseMap : register(t0);
 Texture2D    gNormalMap : register(t1);
 Texture2D    gDispMap : register(t2);
+Texture2D    gMetalMap : register(t3);
+Texture2D    gRoughMap : register(t4);
+Texture2D gAOMap : register(t5);
 
 
 SamplerState gsamPointWrap        : register(s0);
@@ -72,9 +75,10 @@ cbuffer cbPass : register(b1)
 
 cbuffer cbMaterial : register(b2)
 {
+  
 	float4   gDiffuseAlbedo;
     float3   gFresnelR0;
-    float    gRoughness;
+    float DispValue;
 	float4x4 gMatTransform;
 };
 
@@ -259,7 +263,7 @@ DSOutPSIn DSMain(PatchTess patchTessConstants,
     float displacementValue = gDispMap.SampleLevel(gsamLinearWrap, dout.TexC, 0.0f).r;
 
     // 3. Смещение вершины (ЗАКОММЕНТИРОВАНО / УДАЛЕНО)
-    float displacementOffset = (displacementValue - 0.5f) * gDisplacementScale;
+    float displacementOffset = (displacementValue - 0.5f) * DispValue;
     dout.PosW += displacementOffset * dout.NormalW; // <- ЭТО УБРАНО
 
     // 4. Пересчет нормали/касательной (НЕ ТРЕБУЕТСЯ, так как смещения нет)
@@ -281,14 +285,19 @@ DSOutPSIn DSMain(PatchTess patchTessConstants,
 // Изменить сигнатуру функции
 float4 PS(DSOutPSIn pin) : SV_Target
 {
+    float4 test = gMetalMap.Sample(gsamAnisotropicWrap, pin.TexC);
+    test += gRoughMap.Sample(gsamAnisotropicWrap, pin.TexC);
+    test += gAOMap.Sample(gsamAnisotropicWrap, pin.TexC);
+    
+     // Загрузка текстур PBR
+    float metallic = gMetalMap.Sample(gsamAnisotropicWrap, pin.TexC).r; // Металличность (R-канал)
+    float roughness = gRoughMap.Sample(gsamAnisotropicWrap, pin.TexC).r; // Шероховатость (R-канал)
+    float ao = gAOMap.Sample(gsamAnisotropicWrap, pin.TexC).r; // Ambient Occlusion (R-канал)
     // Используем текстуру и сэмплер как раньше
     float4 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
-
-    // Используем normal map, если есть
-    // Функция NormalSampleToWorldSpace должна использовать pin.NormalW и pin.TanW из DS
     float3 normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb; // Загружаем сэмпл нормали
     float3 bumpedNormalW = NormalSampleToWorldSpace(normalSample, pin.NormalW, pin.TanW); // Вычисляем смещенную нормаль
-
+ 
     // Нормаль уже должна быть нормализована в DS, но на всякий случай:
     bumpedNormalW = normalize(bumpedNormalW); // Используем bumpedNormalW для освещения
 
@@ -298,8 +307,9 @@ float4 PS(DSOutPSIn pin) : SV_Target
     // Расчет освещения (используя bumpedNormalW и pin.PosW)
     float4 ambient = gAmbientLight * diffuseAlbedo;
 
-    const float shininess = 1.0f - gRoughness;
-    Material mat = { diffuseAlbedo, gFresnelR0, shininess }; // Передаем обновленный diffuseAlbedo
+    const float shininess = 1.0f - roughness;
+    float3 F0 = lerp(float3(gFresnelR0.x, gFresnelR0.x, gFresnelR0.x), gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb, metallic);
+    Material mat = { diffuseAlbedo, F0,metallic, roughness, ao}; 
 
     // Вычисляем прямое освещение для всех источников света
     float3 directLight = ComputeLighting(gLights,mat,pin.PosW, bumpedNormalW, toEyeW, 1.f); // Передаем bumpedNormalW
