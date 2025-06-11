@@ -676,8 +676,8 @@ void TexColumnsApp::UpdateLightCBs(const GameTimer& gt)
 
 			// Define the orthographic projection volume
 			// These values depend heavily on your scene size.
-			float viewWidth = 300.0f; // Adjust to fit your scene
-			float viewHeight = 300.0f;
+			float viewWidth = 600.0f; // Adjust to fit your scene
+			float viewHeight = 600.0f;
 			float nearZ = 1.0f;
 			float farZ = 1000.0f; // Adjust
 			XMMATRIX lightProj = XMMatrixIdentity();
