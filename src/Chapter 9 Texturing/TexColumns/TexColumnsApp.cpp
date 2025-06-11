@@ -1315,9 +1315,9 @@ void TexColumnsApp::BuildRenderItems()
 	//RenderCustomMesh("building", "sponza", "", XMMatrixScaling(0.07, 0.07, 0.07), XMMatrixRotationRollPitchYaw(0, 3.14 / 2, 0), XMMatrixTranslation(0, 0, 0),1);
 	//RenderCustomMesh("1", "left", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(3.63, 3.9, 1.1),1);
 	//RenderCustomMesh("2", "right", "eye", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(0, 3.14, 0), XMMatrixTranslation(3 - 0.63, 3.9, 1.1),1);
-	for (int i = 0;i < 200;i++)
+	for (int i = 0;i < 20;i++)
 	{
-		for (int j = 0;j < 200;j++)
+		for (int j = 0;j < 20;j++)
 		{
 			RenderCustomMesh("negr", "negr", "NiggaMat", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(i*3,3,j*3),6);
 		}
